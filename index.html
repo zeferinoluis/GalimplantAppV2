@@ -127,10 +127,10 @@
  /* ── Custom Autocomplete ── */
  .ac-wrapper { position: relative; }
  .ac-dropdown {
-   position: absolute; top: 100%; left: 0; right: 0;
+   position: fixed;
    background: #fff; border: 1px solid #b0c4d8;
-   border-radius: 6px; max-height: 200px; overflow-y: auto;
-   z-index: 9999; box-shadow: 0 4px 12px rgba(0,0,0,.15);
+   border-radius: 6px; max-height: 240px; overflow-y: auto;
+   z-index: 99999; box-shadow: 0 4px 12px rgba(0,0,0,.2);
    display: none;
  }
  .ac-dropdown.open { display: block; }
@@ -1332,6 +1332,13 @@
    }).sort();
  }
 
+ function acPosition(input, dd) {
+   var r = input.getBoundingClientRect();
+   dd.style.left = r.left + 'px';
+   dd.style.top = r.bottom + 'px';
+   dd.style.width = r.width + 'px';
+ }
+
  function acFilter(input, tipo) {
    var dd = input.parentElement.querySelector('.ac-dropdown');
    if (!dd) return;
@@ -1343,8 +1350,13 @@
    dd.innerHTML = keys.map(function(k) {
      return '<div class="ac-item" onmousedown="acSelect(this)" data-val="' + k + '"><strong>' + k + '</strong><span>' + (Catalogo[k] || '') + '</span></div>';
    }).join('');
+   acPosition(input, dd);
    dd.classList.add('open');
  }
+
+ window.addEventListener('scroll', function() {
+   document.querySelectorAll('.ac-dropdown.open').forEach(function(dd) { dd.classList.remove('open'); });
+ }, true);
 
  function acSelect(item) {
    var wrapper = item.closest('.ac-wrapper');

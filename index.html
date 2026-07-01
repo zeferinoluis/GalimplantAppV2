@@ -1284,8 +1284,11 @@
  async function exportBackup() {
  const jsonStr = JSON.stringify({ stock: CurrentStock, historico: SurgeriesLog, catalogo: Catalogo });
  const dataH = new Date(); const dFormat = `${dataH.getFullYear()}-${(dataH.getMonth()+1).toString().padStart(2,'0')}-${dataH.getDate().toString().padStart(2,'0')}_${dataH.getHours().toString().padStart(2,'0')}h${dataH.getMinutes().toString().padStart(2,'0')}`;
- const fileName = `backup_galimplant_zeferino_${dFormat}.json`;
- const file = new File([jsonStr], fileName, { type: "application/json" });
+ // Nota: usa-se .txt em vez de .json porque o Web Share API do Chromium/Android
+ // só permite partilhar ficheiros com extensões numa lista fixa (imagens, áudio, vídeo, texto),
+ // e .json não está incluído. O conteúdo continua a ser JSON válido, só muda a extensão.
+ const fileName = `backup_galimplant_zeferino_${dFormat}.txt`;
+ const file = new File([jsonStr], fileName, { type: "text/plain" });
 
  if (navigator.canShare && navigator.canShare({ files: [file] })) {
   try {
@@ -1297,9 +1300,10 @@
   }
  }
 
- const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(jsonStr);
- const a = document.createElement('a'); a.href = dataStr;
+ const blobUrl = URL.createObjectURL(file);
+ const a = document.createElement('a'); a.href = blobUrl;
  a.download = fileName; document.body.appendChild(a); a.click(); a.remove();
+ setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
  localStorage.setItem('galimplant_last_backup', new Date().toISOString()); checkBackupStatus(); showToast("Backup transferido.");
  }
 

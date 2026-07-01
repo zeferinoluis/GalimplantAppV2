@@ -1281,11 +1281,25 @@
   );
  }
 
- function exportBackup() {
- const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({ stock: CurrentStock, historico: SurgeriesLog, catalogo: Catalogo }));
- const a = document.createElement('a'); a.href = dataStr; 
+ async function exportBackup() {
+ const jsonStr = JSON.stringify({ stock: CurrentStock, historico: SurgeriesLog, catalogo: Catalogo });
  const dataH = new Date(); const dFormat = `${dataH.getFullYear()}-${(dataH.getMonth()+1).toString().padStart(2,'0')}-${dataH.getDate().toString().padStart(2,'0')}_${dataH.getHours().toString().padStart(2,'0')}h${dataH.getMinutes().toString().padStart(2,'0')}`;
- a.download = `backup_galimplant_zeferino_${dFormat}.json`; document.body.appendChild(a); a.click(); a.remove();
+ const fileName = `backup_galimplant_zeferino_${dFormat}.json`;
+ const file = new File([jsonStr], fileName, { type: "application/json" });
+
+ if (navigator.canShare && navigator.canShare({ files: [file] })) {
+  try {
+   await navigator.share({ files: [file], title: "Backup Galimplant", text: "Backup de dados Galimplant" });
+   localStorage.setItem('galimplant_last_backup', new Date().toISOString()); checkBackupStatus(); showToast("Backup partilhado.");
+   return;
+  } catch (e) {
+   if (e && e.name === 'AbortError') { return; }
+  }
+ }
+
+ const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(jsonStr);
+ const a = document.createElement('a'); a.href = dataStr;
+ a.download = fileName; document.body.appendChild(a); a.click(); a.remove();
  localStorage.setItem('galimplant_last_backup', new Date().toISOString()); checkBackupStatus(); showToast("Backup transferido.");
  }
 

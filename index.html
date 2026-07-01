@@ -123,6 +123,25 @@
  #printArea { position: absolute; left: 0; top: 0; width: 100%; }
  .no-print { display: none !important; }
  }
+ }
+ /* ── Custom Autocomplete ── */
+ .ac-wrapper { position: relative; }
+ .ac-dropdown {
+   position: absolute; top: 100%; left: 0; right: 0;
+   background: #fff; border: 1px solid #b0c4d8;
+   border-radius: 6px; max-height: 200px; overflow-y: auto;
+   z-index: 9999; box-shadow: 0 4px 12px rgba(0,0,0,.15);
+   display: none;
+ }
+ .ac-dropdown.open { display: block; }
+ .ac-item {
+   padding: 10px 12px; cursor: pointer; font-size: 13px;
+   border-bottom: 1px solid #eef1f5;
+ }
+ .ac-item:last-child { border-bottom: none; }
+ .ac-item:hover, .ac-item.ac-active { background: #e8f0fa; }
+ .ac-item strong { color: #0c3c60; }
+ .ac-item span { color: #666; font-size: 11px; display: block; }
  </style>
 </head>
 <body>
@@ -706,7 +725,7 @@
   if (dlAdi) dlAdi.innerHTML = '';
 
   var reImplante = /^(IPX |IPXC |ICI |ICIC )/;
-  var rePilar    = /^(MUSR |MUSLAR |MUSA |MUSLA |MUST |MUSTE |EMU |PA |PR |PGZA |PCERC |PEA |PCS |PCCS |PCIR |PCIA |PKO |PKB |PCERCM)/;
+  var rePilar    = /^(MUSR |MUSLAR |MUSA |MUSLA |MUST |MUSTE |EMU |PA |PR |PGZA |PCERC |PEA |PCS |PCCS |PCIR |PCIA |PKO |PKB |PCERCM|KMUST |KMU |KEMU |MU )/;
 
   Object.keys(Catalogo).sort().forEach(function(ref) {
    var desc = Catalogo[ref];
@@ -839,9 +858,9 @@
  </div>
  </div>
  <div class="form-row-three">
- <div><label>Implante</label><input list="dlImplantes" class="dente-implante" placeholder="Ex: IPX 4010S" onchange="checkStockAlert(this.value)"></div>
- <div><label>Pilar/Trans</label><input list="dlPilares" class="dente-pilar" placeholder="Ex: MUSR 04030" onchange="checkStockAlert(this.value)"></div>
- <div><label>Adicional</label><input list="dlAdicionais" class="dente-outro" placeholder="Ex: EPCTR 4030">
+ <div class="ac-wrapper"><label>Implante</label><input autocomplete="off" class="dente-implante" placeholder="Ex: IPX 4010S" oninput="acFilter(this,'implante')" onfocus="acFilter(this,'implante')" onchange="checkStockAlert(this.value)" onblur="acClose(this)"><div class="ac-dropdown"></div></div>
+ <div class="ac-wrapper"><label>Pilar/Trans</label><input autocomplete="off" class="dente-pilar" placeholder="Ex: MUSR 04030" oninput="acFilter(this,'pilar')" onfocus="acFilter(this,'pilar')" onchange="checkStockAlert(this.value)" onblur="acClose(this)"><div class="ac-dropdown"></div></div>
+ <div class="ac-wrapper"><label>Adicional</label><input autocomplete="off" class="dente-outro" placeholder="Ex: EPCTR 4030" oninput="acFilter(this,'adicional')" onfocus="acFilter(this,'adicional')" onblur="acClose(this)"><div class="ac-dropdown"></div>
  <button type="button" class="btn btn-small btn-accent" style="width:100%; margin-top:8px;" onclick="removeDenteRow('${idFila}')">Remover</button></div>
  </div>
  </div>`;
@@ -1299,6 +1318,47 @@
  const dias = Math.floor((new Date() - new Date(last)) / (1000*60*60*24));
  st.innerText = `Último backup: há ${dias} dias`;
  if (dias > 7) { st.style.color = "var(--warning)"; setTimeout(() => showToast(`Faça o backup de segurança, passou 1 semana.`, 'warning'), 1500); } else { st.style.color = "#9bc2e6"; }
+ }
+
+ /* ── Custom Autocomplete Functions ── */
+ var reImplante = /^(IPX |IPXC |ICI |ICIC )/;
+ var rePilar    = /^(MUSR |MUSLAR |MUSA |MUSLA |MUST |MUSTE |EMU |PA |PR |PGZA |PCERC |PEA |PCS |PCCS |PCIR |PCIA |PKO |PKB |PCERCM|KMUST |KMU |KEMU |MU )/;
+
+ function acGetList(tipo) {
+   return Object.keys(Catalogo).filter(function(k) {
+     if (tipo === 'implante') return reImplante.test(k);
+     if (tipo === 'pilar')    return rePilar.test(k);
+     return !reImplante.test(k) && !rePilar.test(k);
+   }).sort();
+ }
+
+ function acFilter(input, tipo) {
+   var dd = input.parentElement.querySelector('.ac-dropdown');
+   if (!dd) return;
+   var q = input.value.trim().toUpperCase();
+   var keys = acGetList(tipo).filter(function(k) {
+     return q === '' || k.toUpperCase().indexOf(q) !== -1 || (Catalogo[k] || '').toUpperCase().indexOf(q) !== -1;
+   }).slice(0, 60);
+   if (keys.length === 0) { dd.classList.remove('open'); return; }
+   dd.innerHTML = keys.map(function(k) {
+     return '<div class="ac-item" onmousedown="acSelect(this)" data-val="' + k + '"><strong>' + k + '</strong><span>' + (Catalogo[k] || '') + '</span></div>';
+   }).join('');
+   dd.classList.add('open');
+ }
+
+ function acSelect(item) {
+   var wrapper = item.closest('.ac-wrapper');
+   var input = wrapper.querySelector('input');
+   input.value = item.getAttribute('data-val');
+   item.closest('.ac-dropdown').classList.remove('open');
+   input.dispatchEvent(new Event('change'));
+ }
+
+ function acClose(input) {
+   setTimeout(function() {
+     var dd = input.parentElement.querySelector('.ac-dropdown');
+     if (dd) dd.classList.remove('open');
+   }, 200);
  }
 </script>
 <script>

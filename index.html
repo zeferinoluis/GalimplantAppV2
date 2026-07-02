@@ -1290,7 +1290,11 @@
  const fileName = `backup_galimplant_zeferino_${dFormat}.txt`;
  const file = new File([jsonStr], fileName, { type: "text/plain" });
 
- if (navigator.canShare && navigator.canShare({ files: [file] })) {
+ // O picker de partilha nativo do Windows tem um bug conhecido que falha a
+ // enumerar apps de partilha, por isso no Windows vai-se sempre direto ao download.
+ const isWindows = navigator.userAgentData ? navigator.userAgentData.platform === "Windows" : /Windows/i.test(navigator.userAgent);
+
+ if (!isWindows && navigator.canShare && navigator.canShare({ files: [file] })) {
   try {
    const shareTimeout = new Promise((_, reject) => setTimeout(() => reject(new Error('share_timeout')), 4000));
    await Promise.race([

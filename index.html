@@ -1292,11 +1292,16 @@
 
  if (navigator.canShare && navigator.canShare({ files: [file] })) {
   try {
-   await navigator.share({ files: [file], title: "Backup Galimplant", text: "Backup de dados Galimplant" });
+   const shareTimeout = new Promise((_, reject) => setTimeout(() => reject(new Error('share_timeout')), 4000));
+   await Promise.race([
+    navigator.share({ files: [file], title: "Backup Galimplant", text: "Backup de dados Galimplant" }),
+    shareTimeout
+   ]);
    localStorage.setItem('galimplant_last_backup', new Date().toISOString()); checkBackupStatus(); showToast("Backup partilhado.");
    return;
   } catch (e) {
    if (e && e.name === 'AbortError') { return; }
+   // se for timeout ou outro erro (ex: falha do picker de partilha do Windows), segue para o download
   }
  }
 

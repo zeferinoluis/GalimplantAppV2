@@ -317,6 +317,9 @@
  let Catalogo = {};
  let CurrentStock = {};
  let SurgeriesLog = [];
+ let CatalogDescOverrides = {}; // correções de descrição para refs de fábrica (mesma referência)
+ let CatalogHiddenDefaults = []; // refs de fábrica substituídas por uma referência corrigida
+ let catalogEditingRef = null;
  let denteCounter = 0;
  let hasUnsavedChanges = false;
 
@@ -666,6 +669,9 @@
   // Preserve user-added custom refs
   Object.keys(_sc).forEach(function(k) { if (!catalogoPreDefinido[k]) Catalogo[k] = _sc[k]; });
  }
+ try { CatalogDescOverrides = JSON.parse(localStorage.getItem('galimplant_catalog_descoverrides_v1')) || {}; } catch(e) { CatalogDescOverrides = {}; }
+ try { CatalogHiddenDefaults = JSON.parse(localStorage.getItem('galimplant_catalog_hidden_v1')) || []; } catch(e) { CatalogHiddenDefaults = []; }
+ applyCatalogAdjustments();
  localStorage.setItem('galimplant_catalog_v1', JSON.stringify(Catalogo));
 
  populateDatalist();
@@ -969,6 +975,11 @@
  }
 
  // --- TABELAS E GESTÃO ---
+ function applyCatalogAdjustments() {
+ CatalogHiddenDefaults.forEach(function(r) { delete Catalogo[r]; });
+ Object.keys(CatalogDescOverrides).forEach(function(r) { if (Catalogo[r] !== undefined) Catalogo[r] = CatalogDescOverrides[r]; });
+ }
+
  function adicionarAoCatalogo() {
  const ref = document.getElementById('novaRef').value.trim(); const desc = document.getElementById('novaDesc').value.trim();
  if(!ref || !desc) { showToast("Preencha Referência e Descrição.", "error"); return; }
@@ -983,13 +994,59 @@
  function renderCatalogManager() {
  const tbody = document.getElementById('catalogoManagerBody');
  tbody.innerHTML = '';
- Object.keys(Catalogo).forEach(ref => {
+ Object.keys(Catalogo).sort().forEach(ref => {
  const isDefault = catalogoPreDefinido[ref] !== undefined;
- const btn = !isDefault 
+ if (catalogEditingRef === ref) {
+ const safeId = ref.replace(/[^a-zA-Z0-9]/g,'_');
+ const descVal = (Catalogo[ref]||'').replace(/"/g,'&quot;');
+ tbody.insertAdjacentHTML('beforeend',`<tr>
+ <td><input type="text" id="editRef_${safeId}" value="${ref}" style="width:100%;box-sizing:border-box;"></td>
+ <td><input type="text" id="editDesc_${safeId}" value="${descVal}" style="width:100%;box-sizing:border-box;"></td>
+ <td style="white-space:nowrap;"><button class="btn btn-small btn-success" onclick="saveEditCatalogo('${ref}')">Guardar</button> <button class="btn btn-small" onclick="cancelEditCatalogo()">Cancelar</button></td>
+ </tr>`);
+ return;
+ }
+ const delBtn = !isDefault 
  ? `<button class="btn btn-small btn-accent" onclick="removerDoCatalogo('${ref}')">Apagar</button>`
  : `<span style="font-size:0.8em; color:#999;">Sistema</span>`;
- tbody.insertAdjacentHTML('beforeend',`<tr><td><strong>${ref}</strong></td><td style="font-size:0.85em;color:#555;">${Catalogo[ref]||''}</td><td>${btn}</td></tr>`);
+ tbody.insertAdjacentHTML('beforeend',`<tr><td><strong>${ref}</strong></td><td style="font-size:0.85em;color:#555;">${Catalogo[ref]||''}</td><td style="white-space:nowrap;"><button class="btn btn-small" onclick="startEditCatalogo('${ref}')">Editar</button> ${delBtn}</td></tr>`);
  });
+ }
+
+ function startEditCatalogo(ref) { catalogEditingRef = ref; renderCatalogManager(); }
+ function cancelEditCatalogo() { catalogEditingRef = null; renderCatalogManager(); }
+
+ function saveEditCatalogo(origRef) {
+ const safeId = origRef.replace(/[^a-zA-Z0-9]/g,'_');
+ const newRef = document.getElementById('editRef_'+safeId).value.trim();
+ const newDesc = document.getElementById('editDesc_'+safeId).value.trim();
+ if (!newRef || !newDesc) { showToast("Preencha Referência e Descrição.", "error"); return; }
+ if (newRef !== origRef && Catalogo[newRef] !== undefined) { showToast(`A referência "${newRef}" já existe.`, "warning"); return; }
+
+ const isDefault = catalogoPreDefinido[origRef] !== undefined;
+ const stockVal = CurrentStock[origRef];
+
+ if (newRef === origRef) {
+ Catalogo[origRef] = newDesc;
+ if (isDefault) {
+ CatalogDescOverrides[origRef] = newDesc;
+ localStorage.setItem('galimplant_catalog_descoverrides_v1', JSON.stringify(CatalogDescOverrides));
+ }
+ } else {
+ delete Catalogo[origRef];
+ Catalogo[newRef] = newDesc;
+ if (stockVal !== undefined) { delete CurrentStock[origRef]; CurrentStock[newRef] = stockVal; localStorage.setItem('galimplant_stock_v3', JSON.stringify(CurrentStock)); }
+ if (isDefault) {
+ if (!CatalogHiddenDefaults.includes(origRef)) CatalogHiddenDefaults.push(origRef);
+ localStorage.setItem('galimplant_catalog_hidden_v1', JSON.stringify(CatalogHiddenDefaults));
+ if (CatalogDescOverrides[origRef]) { delete CatalogDescOverrides[origRef]; localStorage.setItem('galimplant_catalog_descoverrides_v1', JSON.stringify(CatalogDescOverrides)); }
+ }
+ }
+
+ localStorage.setItem('galimplant_catalog_v1', JSON.stringify(Catalogo));
+ catalogEditingRef = null;
+ populateDatalist(); renderStockTable(); renderCatalogManager();
+ showToast("Referência atualizada.", "success");
  }
 
  function removerDoCatalogo(ref) {
@@ -1264,7 +1321,10 @@
     localStorage.removeItem('galimplant_stock_v3');
     localStorage.removeItem('galimplant_surgeries_v3');
     localStorage.removeItem('galimplant_catalog_v1');
+    localStorage.removeItem('galimplant_catalog_descoverrides_v1');
+    localStorage.removeItem('galimplant_catalog_hidden_v1');
     localStorage.removeItem('galimplant_last_backup');
+    CatalogDescOverrides = {}; CatalogHiddenDefaults = []; catalogEditingRef = null;
     Catalogo = Object.assign({}, catalogoPreDefinido);
     CurrentStock = {};
     Object.keys(Catalogo).forEach(function(k) { CurrentStock[k] = 0; });
@@ -1282,7 +1342,7 @@
  }
 
  async function exportBackup() {
- const jsonStr = JSON.stringify({ stock: CurrentStock, historico: SurgeriesLog, catalogo: Catalogo });
+ const jsonStr = JSON.stringify({ stock: CurrentStock, historico: SurgeriesLog, catalogo: Catalogo, catalogoDescOverrides: CatalogDescOverrides, catalogoHiddenDefaults: CatalogHiddenDefaults });
  const dataH = new Date(); const dFormat = `${dataH.getFullYear()}-${(dataH.getMonth()+1).toString().padStart(2,'0')}-${dataH.getDate().toString().padStart(2,'0')}_${dataH.getHours().toString().padStart(2,'0')}h${dataH.getMinutes().toString().padStart(2,'0')}`;
  // Nota: usa-se .txt em vez de .json porque o Web Share API do Chromium/Android
  // só permite partilhar ficheiros com extensões numa lista fixa (imagens, áudio, vídeo, texto),
@@ -1324,9 +1384,14 @@
  if(dados.stock && dados.historico) {
  CurrentStock = dados.stock; SurgeriesLog = dados.historico;
  if(dados.catalogo) {
+  CatalogDescOverrides = dados.catalogoDescOverrides || {};
+  CatalogHiddenDefaults = dados.catalogoHiddenDefaults || [];
   Catalogo = Object.assign({}, catalogoPreDefinido);
   Object.keys(dados.catalogo).forEach(function(k) { if (!catalogoPreDefinido[k]) Catalogo[k] = dados.catalogo[k]; });
+  applyCatalogAdjustments();
   localStorage.setItem('galimplant_catalog_v1', JSON.stringify(Catalogo));
+  localStorage.setItem('galimplant_catalog_descoverrides_v1', JSON.stringify(CatalogDescOverrides));
+  localStorage.setItem('galimplant_catalog_hidden_v1', JSON.stringify(CatalogHiddenDefaults));
  }
  localStorage.setItem('galimplant_stock_v3', JSON.stringify(CurrentStock));
  localStorage.setItem('galimplant_surgeries_v3', JSON.stringify(SurgeriesLog));
@@ -1381,8 +1446,11 @@
    dd.classList.add('open');
  }
 
- window.addEventListener('scroll', function() {
-   document.querySelectorAll('.ac-dropdown.open').forEach(function(dd) { dd.classList.remove('open'); });
+ window.addEventListener('scroll', function(e) {
+   document.querySelectorAll('.ac-dropdown.open').forEach(function(dd) {
+     if (dd === e.target || dd.contains(e.target)) return; // scroll dentro da própria lista: não fechar
+     dd.classList.remove('open');
+   });
  }, true);
 
  function acSelect(item) {

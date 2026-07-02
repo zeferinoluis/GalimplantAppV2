@@ -1,4 +1,4 @@
-const CACHE_NAME = "galimplant-cache-v27";
+const CACHE_NAME = "galimplant-cache-v28";
 const ASSETS = [
   "./index.html",
   "./manifest.json",

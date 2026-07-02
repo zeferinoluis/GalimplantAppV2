@@ -142,6 +142,10 @@
  .ac-item:hover, .ac-item.ac-active { background: #e8f0fa; }
  .ac-item strong { color: #0c3c60; }
  .ac-item span { color: #666; font-size: 11px; display: block; }
+ .outros-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+ .ac-chip { background: #e8f0fa; border: 1px solid #b0c4d8; color: var(--primary); border-radius: 14px; padding: 4px 6px 4px 10px; font-size: 12px; display: inline-flex; align-items: center; gap: 4px; }
+ .ac-chip-x { background: none; border: none; color: var(--accent); font-weight: bold; cursor: pointer; padding: 0 4px; font-size: 12px; line-height: 1; }
+ .peca-fields.locked { pointer-events: none; opacity: .7; background: #e9ecef; border-radius: 6px; }
  </style>
 </head>
 <body>
@@ -322,6 +326,7 @@
  let catalogEditingRef = null;
  let denteCounter = 0;
  let hasUnsavedChanges = false;
+ let pecasBloqueadas = false;
 
      const catalogoPreDefinido = {
      // === IMPLANTES IPX – Clássico ===
@@ -766,7 +771,10 @@
  rows.forEach((row, i) => {
  const denteInput = row.querySelector('.dente-id');
  const denteId = denteInput && denteInput.value.trim() !== '' ? denteInput.value.trim() : ('Zona ' + (i+1));
- const key = row.id || ('d' + i);
+ // Chave estável = texto do Dente/Zona (não o id do DOM). O id do DOM (denteCounter) muda entre
+ // sessões/recargas da página, o que fazia a evolução por dente "desaparecer" ao reabrir uma ficha
+ // para editar numa sessão diferente daquela em que foi criada.
+ const key = denteId;
  const savedVals = saved[key] || (i === 0 ? (saved['_single'] || {}) : {});
  container.appendChild(buildFaseRow(faseKey, denteId, labels[faseKey], notesLabels[faseKey], placeholders[faseKey], savedVals, key));
  });
@@ -863,10 +871,14 @@
  </select>
  </div>
  </div>
- <div class="form-row-three">
+ <div class="form-row-three peca-fields">
  <div class="ac-wrapper"><label>Implante</label><input autocomplete="off" class="dente-implante" placeholder="Ex: IPX 4010S" oninput="acFilter(this,'implante')" onfocus="acFilter(this,'implante')" onchange="checkStockAlert(this.value)" onblur="acClose(this)"><div class="ac-dropdown"></div></div>
  <div class="ac-wrapper"><label>Pilar/Trans</label><input autocomplete="off" class="dente-pilar" placeholder="Ex: MUSR 04030" oninput="acFilter(this,'pilar')" onfocus="acFilter(this,'pilar')" onchange="checkStockAlert(this.value)" onblur="acClose(this)"><div class="ac-dropdown"></div></div>
- <div class="ac-wrapper"><label>Adicional</label><input autocomplete="off" class="dente-outro" placeholder="Ex: EPCTR 4030" oninput="acFilter(this,'adicional')" onfocus="acFilter(this,'adicional')" onblur="acClose(this)"><div class="ac-dropdown"></div>
+ <div class="ac-wrapper ac-multi"><label>Adicional (até 10 peças)</label>
+ <input type="hidden" class="dente-outros-data" value="[]">
+ <input autocomplete="off" class="dente-outro-input" placeholder="Escrever/escolher e Enter" oninput="acFilter(this,'adicional')" onfocus="acFilter(this,'adicional')" onkeydown="handleOutroKeydown(event,this)" onblur="acClose(this)">
+ <div class="ac-dropdown"></div>
+ <div class="outros-chips"></div>
  <button type="button" class="btn btn-small btn-accent" style="width:100%; margin-top:8px;" onclick="removeDenteRow('${idFila}')">Remover</button></div>
  </div>
  </div>`;
@@ -878,10 +890,61 @@
  f.querySelector('.dente-estado').value = dados.estado || 'Planeamento';
  f.querySelector('.dente-implante').value = dados.implante || '';
  f.querySelector('.dente-pilar').value = dados.pilar || '';
- f.querySelector('.dente-outro').value = dados.outro || '';
+ getOutrosArray(dados).forEach(v => addOutroToRow(idFila, v));
  }
  renderFaseContainers();
  hasUnsavedChanges = true;
+ }
+
+ // Devolve sempre um array de peças "Adicionais", suportando fichas antigas
+ // que guardaram apenas uma única peça no campo de texto 'outro'.
+ function getOutrosArray(d) {
+ if (!d) return [];
+ if (Array.isArray(d.outros)) return d.outros.filter(Boolean);
+ if (d.outro) return [d.outro];
+ return [];
+ }
+
+ function handleOutroKeydown(e, input) {
+ if (e.key === 'Enter' || e.key === ',') {
+ e.preventDefault();
+ const rowId = input.closest('.dente-row').id;
+ addOutroToRow(rowId, input.value);
+ input.value = '';
+ const dd = input.parentElement.querySelector('.ac-dropdown'); if (dd) dd.classList.remove('open');
+ }
+ }
+
+ function addOutroToRow(rowId, valor) {
+ valor = (valor || '').trim();
+ if (!valor) return;
+ const row = document.getElementById(rowId); if (!row) return;
+ const hidden = row.querySelector('.dente-outros-data');
+ let arr = []; try { arr = JSON.parse(hidden.value || '[]'); } catch(e) { arr = []; }
+ if (arr.length >= 10) { showToast("Máximo de 10 peças adicionais por dente/zona.", "warning"); return; }
+ if (arr.some(v => v.toUpperCase() === valor.toUpperCase())) { showToast("Essa peça já foi adicionada.", "warning"); return; }
+ arr.push(valor);
+ hidden.value = JSON.stringify(arr);
+ checkStockAlert(valor);
+ renderOutrosChips(row);
+ hasUnsavedChanges = true;
+ }
+
+ function removeOutroFromRow(rowId, idx) {
+ const row = document.getElementById(rowId); if (!row) return;
+ const hidden = row.querySelector('.dente-outros-data');
+ let arr = []; try { arr = JSON.parse(hidden.value || '[]'); } catch(e) { arr = []; }
+ arr.splice(idx, 1);
+ hidden.value = JSON.stringify(arr);
+ renderOutrosChips(row);
+ hasUnsavedChanges = true;
+ }
+
+ function renderOutrosChips(row) {
+ const hidden = row.querySelector('.dente-outros-data');
+ let arr = []; try { arr = JSON.parse(hidden.value || '[]'); } catch(e) { arr = []; }
+ const cont = row.querySelector('.outros-chips');
+ cont.innerHTML = arr.map((v, idx) => `<span class="ac-chip">${escapeHTML(v)}${pecasBloqueadas ? '' : ` <button type="button" class="ac-chip-x" onclick="removeOutroFromRow('${row.id}', ${idx})" title="Remover">✕</button>`}</span>`).join('');
  }
 
  function removeDenteRow(idFila) { 
@@ -891,10 +954,13 @@
  }
 
  function getDentesFormValues() {
- return Array.from(document.querySelectorAll('.dente-row')).map(r => ({
+ return Array.from(document.querySelectorAll('.dente-row')).map(r => {
+ let outros = []; try { outros = JSON.parse(r.querySelector('.dente-outros-data').value || '[]'); } catch(e) { outros = []; }
+ return {
  dente: r.querySelector('.dente-id').value.trim(), torque: r.querySelector('.dente-torque').value, estado: r.querySelector('.dente-estado').value,
- implante: r.querySelector('.dente-implante').value, pilar: r.querySelector('.dente-pilar').value, outro: r.querySelector('.dente-outro').value
- })).filter(d => d.dente);
+ implante: r.querySelector('.dente-implante').value, pilar: r.querySelector('.dente-pilar').value, outros: outros
+ };
+ }).filter(d => d.dente);
  }
 
  function saveFase() {
@@ -912,9 +978,8 @@
  if (editIndex === -1) {
  if (listaDentes.length === 0) { showToast("Associe pelo menos 1 dente/zona.", "error"); return; }
  for(let d of listaDentes) {
- if(!d.implante && !d.pilar) continue; 
  let pecas = [];
- if(d.implante) pecas.push(d.implante); if(d.pilar) pecas.push(d.pilar); if(d.outro) pecas.push(d.outro);
+ if(d.implante) pecas.push(d.implante); if(d.pilar) pecas.push(d.pilar); pecas = pecas.concat(d.outros || []);
  for(let p of pecas) { 
  if(!Catalogo[p]) { showToast(`Peça "${p}" não existe no catálogo. Grave no catálogo primeiro.`, "error"); return;}
  if((CurrentStock[p] || 0) <= 0) { showToast(`Stock zero para: ${p}. Impossível abater.`, "error"); return; } 
@@ -924,14 +989,53 @@
  listaDentes.forEach(d => {
  if(d.implante) CurrentStock[d.implante]--; 
  if(d.pilar) CurrentStock[d.pilar]--; 
- if(d.outro) CurrentStock[d.outro]--;
-     avisos.push(d.implante);
+ (d.outros || []).forEach(p => CurrentStock[p]--);
+     if(d.implante) avisos.push(d.implante);
      if(d.pilar && CurrentStock[d.pilar] <= 2) avisos.push(d.pilar);
-     if(d.outro && CurrentStock[d.outro] <= 2) avisos.push(d.outro);
+     (d.outros || []).forEach(p => { if(CurrentStock[p] <= 2) avisos.push(p); });
  });
  if(avisos.length > 0) showToast(`Aviso: ${avisos.join(', ')} entrou em rutura.`, "warning");
  localStorage.setItem('galimplant_stock_v3', JSON.stringify(CurrentStock));
  renderStockTable();
+ } else if (!pecasBloqueadas) {
+ // Correção de peças ativada: reconcilia o stock com a diferença entre as peças
+ // antigas e as novas, em vez de simplesmente bloquear a alteração.
+ const originais = SurgeriesLog[editIndex].dentesTratados;
+ const pecasOriginais = (i) => originais[i] ? [originais[i].implante, originais[i].pilar].concat(getOutrosArray(originais[i])).filter(Boolean) : [];
+ const pecasNovas = (d) => [d.implante, d.pilar].concat(d.outros || []).filter(Boolean);
+
+ // Valida catálogo para todas as peças novas antes de mexer em qualquer stock
+ for (let i = 0; i < listaDentes.length; i++) {
+ for (let p of pecasNovas(listaDentes[i])) {
+ if (!Catalogo[p]) { showToast(`Peça "${p}" não existe no catálogo. Grave no catálogo primeiro.`, "error"); return; }
+ }
+ }
+
+ // Calcula, por multiconjunto, o que sai (devolve ao stock) e o que entra (abate do stock)
+ const devolver = {}, abater = {};
+ for (let i = 0; i < listaDentes.length; i++) {
+ const antigas = pecasOriginais(i).slice(); const novas = pecasNovas(listaDentes[i]).slice();
+ antigas.forEach(p => {
+ const idx = novas.indexOf(p);
+ if (idx !== -1) { novas.splice(idx, 1); } else { devolver[p] = (devolver[p] || 0) + 1; }
+ });
+ novas.forEach(p => { abater[p] = (abater[p] || 0) + 1; });
+ }
+
+ // Simula para garantir que não fica stock negativo
+ const stockSimulado = Object.assign({}, CurrentStock);
+ Object.keys(devolver).forEach(p => { stockSimulado[p] = (stockSimulado[p] || 0) + devolver[p]; });
+ for (let p of Object.keys(abater)) {
+ if ((stockSimulado[p] || 0) < abater[p]) { showToast(`Stock insuficiente para trocar para: ${p}.`, "error"); return; }
+ stockSimulado[p] -= abater[p];
+ }
+
+ CurrentStock = stockSimulado;
+ localStorage.setItem('galimplant_stock_v3', JSON.stringify(CurrentStock));
+ renderStockTable();
+ if (Object.keys(devolver).length || Object.keys(abater).length) {
+ showToast(`Stock ajustado com a correção de peças.`, "success");
+ }
  }
 
  const faseData = getFaseData();
@@ -947,13 +1051,18 @@
  if (editIndex === -1) {
  SurgeriesLog.unshift(dadosFicha); showToast(`Ficha criada e stock abatido!`);
  } else {
+ if (pecasBloqueadas) {
+ // Peças continuam bloqueadas: mantém sempre os valores originais, independentemente do que
+ // possa estar no formulário (defesa extra, já que os campos estão desativados na interface).
  const originais = SurgeriesLog[editIndex].dentesTratados;
- dadosFicha.dentesTratados.forEach((nd, i) => { if(originais[i]) { nd.implante = originais[i].implante; nd.pilar = originais[i].pilar; nd.outro = originais[i].outro; } });
+ dadosFicha.dentesTratados.forEach((nd, i) => { if(originais[i]) { nd.implante = originais[i].implante; nd.pilar = originais[i].pilar; nd.outros = getOutrosArray(originais[i]); } });
+ }
  SurgeriesLog[editIndex] = Object.assign(SurgeriesLog[editIndex], dadosFicha); showToast(`Ficha atualizada!`);
  }
  
  localStorage.setItem('galimplant_surgeries_v3', JSON.stringify(SurgeriesLog));
  hasUnsavedChanges = false;
+ pecasBloqueadas = false;
  forceCancelEditing(); updateDashboard(); filterHistoryAndRender();
  }
 
@@ -964,7 +1073,7 @@
  ficha.dentesTratados.forEach(d => {
  if (d.implante && Catalogo[d.implante] !== undefined) CurrentStock[d.implante]++;
  if (d.pilar && Catalogo[d.pilar] !== undefined) CurrentStock[d.pilar]++;
- if (d.outro && Catalogo[d.outro] !== undefined) CurrentStock[d.outro]++;
+ getOutrosArray(d).forEach(p => { if (Catalogo[p] !== undefined) CurrentStock[p]++; });
  });
  localStorage.setItem('galimplant_stock_v3', JSON.stringify(CurrentStock)); renderStockTable();
  }
@@ -1118,7 +1227,7 @@
  function openForEditing(index) {
  if(hasUnsavedChanges && !confirm("Tem alterações não guardadas. Deseja sobrepor?")) return;
  const c = SurgeriesLog[index]; document.getElementById('editIndex').value = index;
- document.getElementById('formTitle').innerHTML = `A Editar Ficha <span style="font-size:0.6em; color:var(--warning);">(Peças bloqueadas)</span>`;
+ document.getElementById('formTitle').innerHTML = `A Editar Ficha <span id="pecasLockLabel" style="font-size:0.6em; color:var(--warning);">(Peças bloqueadas)</span> <button type="button" id="btnCorrigirPecas" class="btn btn-small" style="background:#8e5a00;" onclick="toggleCorrigirPecas()">🔓 Corrigir Peças</button>`;
  document.getElementById('formCard').style.borderTop = '4px solid var(--warning)';
  document.getElementById('btnSaveMain').innerText = "Gravar Alterações";
  
@@ -1133,13 +1242,37 @@
  
  restoreFaseContainers(c);
  
- document.querySelectorAll('.dente-implante, .dente-pilar, .dente-outro').forEach(el => el.disabled = true);
+ pecasBloqueadas = true;
+ applyPecasLockState();
  document.querySelectorAll('.dente-row .btn-accent').forEach(el => el.style.display = 'none');
  document.getElementById('btnAdicionarDente').style.display = 'none';
 
  document.getElementById('cancelEditBtn').style.display = "block";
  document.getElementById('formCard').scrollIntoView({ behavior: 'smooth' });
  hasUnsavedChanges = false;
+ }
+
+ // Aplica/retira o bloqueio visual e funcional dos campos de peças (implante/pilar/adicionais)
+ // conforme o estado da variável global pecasBloqueadas.
+ function applyPecasLockState() {
+ document.querySelectorAll('.dente-implante, .dente-pilar, .dente-outro-input').forEach(el => el.disabled = pecasBloqueadas);
+ document.querySelectorAll('.peca-fields').forEach(el => el.classList.toggle('locked', pecasBloqueadas));
+ document.querySelectorAll('.dente-row').forEach(row => renderOutrosChips(row));
+ const lbl = document.getElementById('pecasLockLabel');
+ const btn = document.getElementById('btnCorrigirPecas');
+ if (lbl) lbl.textContent = pecasBloqueadas ? '(Peças bloqueadas)' : '(Peças desbloqueadas — o stock será ajustado ao gravar)';
+ if (lbl) lbl.style.color = pecasBloqueadas ? 'var(--warning)' : 'var(--accent)';
+ if (btn) btn.textContent = pecasBloqueadas ? '🔓 Corrigir Peças' : '🔒 Bloquear Peças';
+ }
+
+ function toggleCorrigirPecas() {
+ if (pecasBloqueadas) {
+ showConfirm("Vai poder alterar o implante, pilar/trans. e peças adicionais desta ficha. Ao gravar, o stock será automaticamente ajustado (peça antiga devolvida, peça nova abatida). Continuar?", () => {
+ pecasBloqueadas = false; applyPecasLockState(); hasUnsavedChanges = true;
+ }, "Corrigir Peças");
+ } else {
+ pecasBloqueadas = true; applyPecasLockState();
+ }
  }
 
  function attemptCancelEditing() {
@@ -1151,6 +1284,7 @@
  document.getElementById('btnSaveMain').innerText = "Gravar Ficha e Abater Stock";
  document.getElementById('cancelEditBtn').style.display = "none"; document.getElementById('formCard').style.borderTop = ''; document.getElementById('surgeryForm').reset();
  document.getElementById('btnAdicionarDente').style.display = 'block'; document.getElementById('dentesContainer').innerHTML = ''; 
+ pecasBloqueadas = false;
  addDenteRow(); hasUnsavedChanges = false;
  }
 
@@ -1229,7 +1363,7 @@
  
  const listaDentesPDF = ficha.dentesTratados || [];
  const compBody = listaDentesPDF.length > 0 
- ? listaDentesPDF.map(d => [d.dente || '-', d.implante || '-', d.pilar || '-', (d.torque ? d.torque + ' Ncm' : '-') + (d.outro ? '\n+ ' + d.outro : ''), d.estado || '-'])
+ ? listaDentesPDF.map(d => [d.dente || '-', d.implante || '-', d.pilar || '-', (d.torque ? d.torque + ' Ncm' : '-') + (getOutrosArray(d).length ? '\n+ ' + getOutrosArray(d).join('\n+ ') : ''), d.estado || '-'])
  : [['-', 'Sem dados de peças estruturados', '-', '-', '-']];
 
  doc.autoTable({
@@ -1297,7 +1431,7 @@
  <h4 style="margin-top:20px; border-bottom:1px solid #ccc;">Trabalho Clínico e Peças Utilizadas</h4>
  <table style="width:100%; border-collapse: collapse; margin-bottom:20px; font-size:14px;">
  <tr style="background:#f4f4f4;"><th style="border:1px solid #ccc; padding:8px;">Dente</th><th style="border:1px solid #ccc; padding:8px;">Implante</th><th style="border:1px solid #ccc; padding:8px;">Pilar/Outro</th><th style="border:1px solid #ccc; padding:8px;">Torque</th><th style="border:1px solid #ccc; padding:8px;">Estado</th></tr>
-          ${(c.dentesTratados||[]).map(function(d){return '<tr><td style="border:1px solid #ccc;padding:8px;">'+(d.dente||'-')+'</td><td style="border:1px solid #ccc;padding:8px;">'+(d.implante||'-')+'</td><td style="border:1px solid #ccc;padding:8px;">'+(d.pilar||'-')+(d.outro?' | '+d.outro:'')+'</td><td style="border:1px solid #ccc;padding:8px;">'+(d.torque?d.torque+' Ncm':'-')+'</td><td style="border:1px solid #ccc;padding:8px;">'+(d.estado||'-')+'</td></tr>';}).join('') || '<tr><td colspan="5" style="text-align:center;color:#999;padding:8px;">Sem peças registadas</td></tr>'}
+          ${(c.dentesTratados||[]).map(function(d){return '<tr><td style="border:1px solid #ccc;padding:8px;">'+(d.dente||'-')+'</td><td style="border:1px solid #ccc;padding:8px;">'+(d.implante||'-')+'</td><td style="border:1px solid #ccc;padding:8px;">'+(d.pilar||'-')+(getOutrosArray(d).length?' | '+getOutrosArray(d).join(' + '):'')+'</td><td style="border:1px solid #ccc;padding:8px;">'+(d.torque?d.torque+' Ncm':'-')+'</td><td style="border:1px solid #ccc;padding:8px;">'+(d.estado||'-')+'</td></tr>';}).join('') || '<tr><td colspan="5" style="text-align:center;color:#999;padding:8px;">Sem peças registadas</td></tr>'}
  </table>
  
  <h4 style="margin-top:20px; border-bottom:1px solid #ccc;">Cronograma e Notas de Evolução</h4>
@@ -1455,9 +1589,18 @@
 
  function acSelect(item) {
    var wrapper = item.closest('.ac-wrapper');
-   var input = wrapper.querySelector('input');
-   input.value = item.getAttribute('data-val');
+   var val = item.getAttribute('data-val');
    item.closest('.ac-dropdown').classList.remove('open');
+   if (wrapper.classList.contains('ac-multi')) {
+     var input = wrapper.querySelector('.dente-outro-input');
+     var rowId = input.closest('.dente-row').id;
+     addOutroToRow(rowId, val);
+     input.value = '';
+     input.focus();
+     return;
+   }
+   var input = wrapper.querySelector('input');
+   input.value = val;
    input.dispatchEvent(new Event('change'));
  }
 

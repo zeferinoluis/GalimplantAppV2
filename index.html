@@ -982,11 +982,13 @@
  if(d.implante) pecas.push(d.implante); if(d.pilar) pecas.push(d.pilar); pecas = pecas.concat(d.outros || []);
  for(let p of pecas) { 
  if(!Catalogo[p]) { showToast(`Peça "${p}" não existe no catálogo. Grave no catálogo primeiro.`, "error"); return;}
- if((CurrentStock[p] || 0) <= 0) { showToast(`Stock zero para: ${p}. Impossível abater.`, "error"); return; } 
+ // Em Planeamento, a peça só será necessária se a cirurgia for aprovada — não exige stock nem o abate agora.
+ if(d.estado !== 'Planeamento' && (CurrentStock[p] || 0) <= 0) { showToast(`Stock zero para: ${p}. Impossível abater.`, "error"); return; } 
  }
  }
  let avisos = [];
  listaDentes.forEach(d => {
+ if (d.estado === 'Planeamento') return; // Sem abate de stock enquanto estiver em Planeamento
  if(d.implante) CurrentStock[d.implante]--; 
  if(d.pilar) CurrentStock[d.pilar]--; 
  (d.outros || []).forEach(p => CurrentStock[p]--);
@@ -1001,12 +1003,15 @@
  // Correção de peças ativada: reconcilia o stock com a diferença entre as peças
  // antigas e as novas, em vez de simplesmente bloquear a alteração.
  const originais = SurgeriesLog[editIndex].dentesTratados;
- const pecasOriginais = (i) => originais[i] ? [originais[i].implante, originais[i].pilar].concat(getOutrosArray(originais[i])).filter(Boolean) : [];
- const pecasNovas = (d) => [d.implante, d.pilar].concat(d.outros || []).filter(Boolean);
+ // Peças de um dente em Planeamento nunca consumiram stock; só contam para o stock
+ // as peças de dentes que já saíram da fase de Planeamento.
+ const pecasOriginais = (i) => (originais[i] && originais[i].estado !== 'Planeamento') ? [originais[i].implante, originais[i].pilar].concat(getOutrosArray(originais[i])).filter(Boolean) : [];
+ const pecasNovas = (d) => (d.estado !== 'Planeamento') ? [d.implante, d.pilar].concat(d.outros || []).filter(Boolean) : [];
 
- // Valida catálogo para todas as peças novas antes de mexer em qualquer stock
+ // Valida catálogo para todas as peças novas (independentemente do estado) antes de mexer em qualquer stock
  for (let i = 0; i < listaDentes.length; i++) {
- for (let p of pecasNovas(listaDentes[i])) {
+ const pecasTodas = [listaDentes[i].implante, listaDentes[i].pilar].concat(listaDentes[i].outros || []).filter(Boolean);
+ for (let p of pecasTodas) {
  if (!Catalogo[p]) { showToast(`Peça "${p}" não existe no catálogo. Grave no catálogo primeiro.`, "error"); return; }
  }
  }
@@ -1071,6 +1076,7 @@
  showConfirm(`Eliminar ficha de "${ficha.paciente}"? As peças regressarão ao stock.`, () => {
  if (ficha.dentesTratados) {
  ficha.dentesTratados.forEach(d => {
+ if (d.estado === 'Planeamento') return; // Nunca abateu stock, por isso não devolve nada
  if (d.implante && Catalogo[d.implante] !== undefined) CurrentStock[d.implante]++;
  if (d.pilar && Catalogo[d.pilar] !== undefined) CurrentStock[d.pilar]++;
  getOutrosArray(d).forEach(p => { if (Catalogo[p] !== undefined) CurrentStock[p]++; });

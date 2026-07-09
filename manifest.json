@@ -1,5 +1,5 @@
 {
-  "id": "/",
+  "id": "./",
   "name": "Gestão Clínica e Stock Galimplant",
   "short_name": "Galimplant",
   "description": "Aplicação de gestão clínica e de stock Galimplant",
@@ -26,13 +26,13 @@
       "purpose": "any"
     },
     {
-      "src": "icon-192.png",
+      "src": "icon-192-maskable.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "maskable"
     },
     {
-      "src": "icon-512.png",
+      "src": "icon-512-maskable.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"

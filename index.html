@@ -123,7 +123,6 @@
  #printArea { position: absolute; left: 0; top: 0; width: 100%; }
  .no-print { display: none !important; }
  }
- }
  /* ── Custom Autocomplete ── */
  .ac-wrapper { position: relative; }
  .ac-dropdown {
@@ -167,6 +166,23 @@
  </div>
 </div>
 
+<div id="encomendas-modal" class="modal-overlay">
+ <div class="modal-box" style="max-width: 720px;">
+  <h3 style="color:var(--primary);">&#128230; Peças a Encomendar (Planeamento)</h3>
+  <p id="encomendas-info" style="font-size:0.85em; color:#666; margin-top:0;">Peças necessárias para os dentes/zonas em estado "Planeamento", comparadas com o stock atual.</p>
+  <div class="table-wrapper" style="max-height: 320px;">
+   <table>
+    <thead><tr><th>Referência</th><th>Descrição</th><th>Necessário</th><th>Stock</th><th>A Encomendar</th></tr></thead>
+    <tbody id="encomendasBody"></tbody>
+   </table>
+  </div>
+  <div class="modal-actions">
+   <button class="btn" style="background:#7f8c8d;" onclick="document.getElementById('encomendas-modal').classList.remove('show')">Fechar</button>
+   <button class="btn btn-success" onclick="exportEncomendasPDF()">&#128196; Exportar PDF</button>
+  </div>
+ </div>
+</div>
+
 <div class="container no-print">
  <header>
  <div class="logo-container">
@@ -199,7 +215,7 @@
  <div class="value" id="dashTotalFichas">0</div>
  </div>
  <div class="dash-card dash-alert">
- <h4>Consultas < 7 Dias</h4>
+ <h4>Consultas &lt; 7 Dias</h4>
  <div class="value" id="dashAlertas">0</div>
  </div>
  <div class="dash-card dash-warning">
@@ -279,7 +295,10 @@
  <tbody id="stockTableBody"></tbody>
  </table>
  </div>
- <div style="text-align: right;"><button class="btn" onclick="saveStockToStorage()">Atualizar Valores Manuais</button></div>
+ <div style="display:flex; justify-content: space-between; gap: 10px; flex-wrap: wrap;">
+ <button class="btn btn-success" onclick="showEncomendas()">&#128230; Lista de Encomendas</button>
+ <button class="btn" onclick="saveStockToStorage()">Atualizar Valores Manuais</button>
+ </div>
  </div>
 
  <div class="card">
@@ -327,6 +346,12 @@
  let denteCounter = 0;
  let hasUnsavedChanges = false;
  let pecasBloqueadas = false;
+ let modalCallback = null;
+
+ // Aviso de fecho acidental com dados por gravar
+ window.addEventListener('beforeunload', (e) => {
+  if (hasUnsavedChanges) { e.preventDefault(); e.returnValue = ''; }
+ });
 
      const catalogoPreDefinido = {
      // === IMPLANTES IPX – Clássico ===
@@ -717,9 +742,13 @@
   });
  }
 
- function showConfirm(message, onConfirm, title="⚠️ Atenção") {
+ function showConfirm(message, onConfirm, title="⚠️ Atenção", infoOnly=false) {
  document.getElementById('modal-title').innerText = title;
  document.getElementById('modal-message').innerText = message;
+ const btnConfirm = document.getElementById('modal-confirm-btn');
+ const btnCancel = btnConfirm.previousElementSibling;
+ btnCancel.style.display = infoOnly ? 'none' : '';
+ btnConfirm.innerText = infoOnly ? 'Fechar' : 'Confirmar Ação';
  modalCallback = onConfirm; document.getElementById('custom-modal').classList.add('show');
  }
  function closeModal() { document.getElementById('custom-modal').classList.remove('show'); modalCallback = null; }
@@ -735,9 +764,7 @@
   if (dlPil) dlPil.innerHTML = '';
   if (dlAdi) dlAdi.innerHTML = '';
 
-  var reImplante = /^(IPX |IPXC |ICI |ICIC )/;
-  var rePilar    = /^(MUSR |MUSLAR |MUSA |MUSLA |MUST |MUSTE |EMU |PA |PR |PGZA |PCERC |PEA |PCS |PCCS |PCIR |PCIA |PKO |PKB |PCERCM|KMUST |KMU |KEMU |MU )/;
-
+  // Usa as regexes globais reImplante/rePilar (definição única, mais abaixo)
   Object.keys(Catalogo).sort().forEach(function(ref) {
    var desc = Catalogo[ref];
    var o = document.createElement('option');
@@ -970,10 +997,21 @@
  
  if (!pName || !pDate || !pBirth) { showToast("Preencha a Data de Abertura, Nome e Data de Nascimento.", "error"); return; }
  if (new Date(pBirth) > new Date()) { showToast("A Data de Nascimento não pode ser no futuro.", "error"); return; }
-  if (pDate && pBirth && new Date(pDate) < new Date(pBirth)) { showToast("A data da cirurgia não pode ser anterior à data de nascimento.", "error"); return; }
+  if (pDate && pBirth && new Date(pDate) < new Date(pBirth)) { showToast("A data de abertura não pode ser anterior à data de nascimento.", "error"); return; }
 
  const editIndex = parseInt(document.getElementById('editIndex').value);
  const listaDentes = getDentesFormValues();
+
+ // Dentes/Zonas duplicados partilhariam a mesma chave nas fases — bloquear
+ const nomesDentes = listaDentes.map(d => d.dente.toUpperCase());
+ if (new Set(nomesDentes).size !== nomesDentes.length) { showToast("Existem Dentes/Zonas com o mesmo nome. Use identificações distintas (ex: 16, 16-distal).", "error"); return; }
+
+ // Evitar dois processos com o mesmo Nº / ID
+ const pIdVal = document.getElementById('pId').value.trim();
+ if (pIdVal) {
+  const dup = SurgeriesLog.some((f, i) => i !== editIndex && (f.idProcesso || '').trim().toUpperCase() === pIdVal.toUpperCase());
+  if (dup) { showToast(`Já existe uma ficha com o Nº Processo "${pIdVal}".`, "error"); return; }
+ }
 
  if (editIndex === -1) {
  if (listaDentes.length === 0) { showToast("Associe pelo menos 1 dente/zona.", "error"); return; }
@@ -992,17 +1030,22 @@
  if(d.implante) CurrentStock[d.implante]--; 
  if(d.pilar) CurrentStock[d.pilar]--; 
  (d.outros || []).forEach(p => CurrentStock[p]--);
-     if(d.implante) avisos.push(d.implante);
+     if(d.implante && CurrentStock[d.implante] <= 2) avisos.push(d.implante);
      if(d.pilar && CurrentStock[d.pilar] <= 2) avisos.push(d.pilar);
      (d.outros || []).forEach(p => { if(CurrentStock[p] <= 2) avisos.push(p); });
  });
- if(avisos.length > 0) showToast(`Aviso: ${avisos.join(', ')} entrou em rutura.`, "warning");
+ if(avisos.length > 0) showToast(`Aviso: stock crítico para ${avisos.join(', ')}.`, "warning");
  localStorage.setItem('galimplant_stock_v3', JSON.stringify(CurrentStock));
  renderStockTable();
- } else if (!pecasBloqueadas) {
- // Correção de peças ativada: reconcilia o stock com a diferença entre as peças
- // antigas e as novas, em vez de simplesmente bloquear a alteração.
- const originais = SurgeriesLog[editIndex].dentesTratados;
+ } else {
+ // EDIÇÃO: a reconciliação de stock corre SEMPRE — mesmo com as peças bloqueadas —
+ // para que a mudança de estado de "Planeamento" para uma fase ativa abata o stock
+ // automaticamente (e o regresso a "Planeamento" o devolva). Com as peças bloqueadas,
+ // as referências são primeiro forçadas aos valores originais; só o estado pode variar.
+ const originais = SurgeriesLog[editIndex].dentesTratados || [];
+ if (pecasBloqueadas) {
+  listaDentes.forEach((nd, i) => { if (originais[i]) { nd.implante = originais[i].implante; nd.pilar = originais[i].pilar; nd.outros = getOutrosArray(originais[i]); } });
+ }
  // Peças de um dente em Planeamento nunca consumiram stock; só contam para o stock
  // as peças de dentes que já saíram da fase de Planeamento.
  const pecasOriginais = (i) => (originais[i] && originais[i].estado !== 'Planeamento') ? [originais[i].implante, originais[i].pilar].concat(getOutrosArray(originais[i])).filter(Boolean) : [];
@@ -1031,7 +1074,7 @@
  const stockSimulado = Object.assign({}, CurrentStock);
  Object.keys(devolver).forEach(p => { stockSimulado[p] = (stockSimulado[p] || 0) + devolver[p]; });
  for (let p of Object.keys(abater)) {
- if ((stockSimulado[p] || 0) < abater[p]) { showToast(`Stock insuficiente para trocar para: ${p}.`, "error"); return; }
+ if ((stockSimulado[p] || 0) < abater[p]) { showToast(`Stock insuficiente para: ${p}. Atualize o inventário (encomenda recebida) antes de mudar o estado.`, "error"); return; }
  stockSimulado[p] -= abater[p];
  }
 
@@ -1039,7 +1082,7 @@
  localStorage.setItem('galimplant_stock_v3', JSON.stringify(CurrentStock));
  renderStockTable();
  if (Object.keys(devolver).length || Object.keys(abater).length) {
- showToast(`Stock ajustado com a correção de peças.`, "success");
+ showToast(`Stock ajustado automaticamente (peças abatidas/devolvidas).`, "success");
  }
  }
 
@@ -1056,12 +1099,8 @@
  if (editIndex === -1) {
  SurgeriesLog.unshift(dadosFicha); showToast(`Ficha criada e stock abatido!`);
  } else {
- if (pecasBloqueadas) {
- // Peças continuam bloqueadas: mantém sempre os valores originais, independentemente do que
- // possa estar no formulário (defesa extra, já que os campos estão desativados na interface).
- const originais = SurgeriesLog[editIndex].dentesTratados;
- dadosFicha.dentesTratados.forEach((nd, i) => { if(originais[i]) { nd.implante = originais[i].implante; nd.pilar = originais[i].pilar; nd.outros = getOutrosArray(originais[i]); } });
- }
+ // Nota: com peças bloqueadas, as referências já foram forçadas aos valores
+ // originais antes da reconciliação de stock, mais acima.
  SurgeriesLog[editIndex] = Object.assign(SurgeriesLog[editIndex], dadosFicha); showToast(`Ficha atualizada!`);
  }
  
@@ -1098,6 +1137,7 @@
  function adicionarAoCatalogo() {
  const ref = document.getElementById('novaRef').value.trim(); const desc = document.getElementById('novaDesc').value.trim();
  if(!ref || !desc) { showToast("Preencha Referência e Descrição.", "error"); return; }
+ if(!/^[A-Za-z0-9 ._\/-]+$/.test(ref)) { showToast("A referência só pode conter letras, números, espaços e . _ / -", "error"); return; }
   if(Catalogo[ref]) { showToast("Referência \"" + ref + "\" já existe no catálogo.", "warning"); return; }
  Catalogo[ref] = desc; if(CurrentStock[ref] === undefined) CurrentStock[ref] = 0;
  localStorage.setItem('galimplant_catalog_v1', JSON.stringify(Catalogo));
@@ -1121,10 +1161,11 @@
  </tr>`);
  return;
  }
+ const refJs = ref.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
  const delBtn = !isDefault 
- ? `<button class="btn btn-small btn-accent" onclick="removerDoCatalogo('${ref}')">Apagar</button>`
+ ? `<button class="btn btn-small btn-accent" onclick="removerDoCatalogo('${refJs}')">Apagar</button>`
  : `<span style="font-size:0.8em; color:#999;">Sistema</span>`;
- tbody.insertAdjacentHTML('beforeend',`<tr><td><strong>${ref}</strong></td><td style="font-size:0.85em;color:#555;">${Catalogo[ref]||''}</td><td style="white-space:nowrap;"><button class="btn btn-small" onclick="startEditCatalogo('${ref}')">Editar</button> ${delBtn}</td></tr>`);
+ tbody.insertAdjacentHTML('beforeend',`<tr><td><strong>${escapeHTML(ref)}</strong></td><td style="font-size:0.85em;color:#555;">${escapeHTML(Catalogo[ref]||'')}</td><td style="white-space:nowrap;"><button class="btn btn-small" onclick="startEditCatalogo('${refJs}')">Editar</button> ${delBtn}</td></tr>`);
  });
  }
 
@@ -1136,6 +1177,7 @@
  const newRef = document.getElementById('editRef_'+safeId).value.trim();
  const newDesc = document.getElementById('editDesc_'+safeId).value.trim();
  if (!newRef || !newDesc) { showToast("Preencha Referência e Descrição.", "error"); return; }
+ if (!/^[A-Za-z0-9 ._\/-]+$/.test(newRef)) { showToast("A referência só pode conter letras, números, espaços e . _ / -", "error"); return; }
  if (newRef !== origRef && Catalogo[newRef] !== undefined) { showToast(`A referência "${newRef}" já existe.`, "warning"); return; }
 
  const isDefault = catalogoPreDefinido[origRef] !== undefined;
@@ -1180,7 +1222,8 @@
  Object.keys(Catalogo).forEach(ref => {
  const qtd = CurrentStock[ref] || 0;
  let status = qtd === 0 ? '<span class="badge badge-danger">S/ Stock</span>' : (qtd <= 2 ? '<span class="badge badge-warning">Crítico</span>' : '<span class="badge badge-success">OK</span>');
- tbody.insertAdjacentHTML('beforeend', `<tr class="item-row"><td><strong>${ref}</strong></td><td>${Catalogo[ref]}</td><td><input type="number" class="stock-input" id="input_st_${ref.replace(/[^a-zA-Z0-9]/g,'_')}" value="${qtd}" min="0" onchange="updateSingleStock('${ref}', this.value)"></td><td>${status}</td></tr>`);
+ const refJs = ref.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+ tbody.insertAdjacentHTML('beforeend', `<tr class="item-row"><td><strong>${escapeHTML(ref)}</strong></td><td>${escapeHTML(Catalogo[ref])}</td><td><input type="number" class="stock-input" id="input_st_${ref.replace(/[^a-zA-Z0-9]/g,'_')}" value="${qtd}" min="0" onchange="updateSingleStock('${refJs}', this.value)"></td><td>${status}</td></tr>`);
  });
  }
  function updateSingleStock(ref, val) { CurrentStock[ref] = parseInt(val) || 0; localStorage.setItem('galimplant_stock_v3', JSON.stringify(CurrentStock)); renderStockTable(); updateDashboard(); }
@@ -1193,18 +1236,20 @@
  const sexQ = document.getElementById('searchHistorySex').value; const dateQ = document.getElementById('searchHistoryDate').value;
  const histDiv = document.getElementById('surgeryHistory'); histDiv.innerHTML = '';
  
- const filtered = SurgeriesLog.map((c, idx) => ({...c, originalIndex: idx})).filter(c => {
+ const matched = SurgeriesLog.map((c, idx) => ({...c, originalIndex: idx})).filter(c => {
  const matchName = !nameQ || c.paciente.toLowerCase().includes(nameQ) || (c.idProcesso && c.idProcesso.toLowerCase().includes(nameQ));
  const matchSex = !sexQ || c.sexo === sexQ; const matchDate = !dateQ || c.dataCirurgia === dateQ;
  return matchName && matchSex && matchDate;
- }).slice(0, 20);
+ });
+ const filtered = matched.slice(0, 20);
 
-  if (filtered.length===20 && SurgeriesLog.length>20) {
-   histDiv.insertAdjacentHTML('beforeend','<p style="color:#e67e22;font-size:0.85em;margin:0 0 8px;">⚠️ A mostrar as primeiras 20 de '+SurgeriesLog.length+' fichas. Refine os filtros.</p>');
+  if (matched.length > 20) {
+   histDiv.insertAdjacentHTML('beforeend','<p style="color:#e67e22;font-size:0.85em;margin:0 0 8px;">⚠️ A mostrar as primeiras 20 de '+matched.length+' fichas correspondentes. Refine os filtros.</p>');
   }
+ const hoje0 = new Date(); hoje0.setHours(0,0,0,0);
  filtered.forEach(c => {
  const numDentes = c.dentesTratados ? c.dentesTratados.length : 0;
- const diasAteConsulta = c.nextAppt ? Math.floor((new Date(c.nextAppt) - new Date()) / (1000*60*60*24)) : null;
+ const diasAteConsulta = c.nextAppt ? Math.round((new Date(c.nextAppt + 'T00:00:00') - hoje0) / 86400000) : null;
  const alertClass = (diasAteConsulta !== null && diasAteConsulta >= 0 && diasAteConsulta <= 7) ? 'urgent-consult' : '';
  
  histDiv.insertAdjacentHTML('beforeend', `
@@ -1266,7 +1311,7 @@
  document.querySelectorAll('.dente-row').forEach(row => renderOutrosChips(row));
  const lbl = document.getElementById('pecasLockLabel');
  const btn = document.getElementById('btnCorrigirPecas');
- if (lbl) lbl.textContent = pecasBloqueadas ? '(Peças bloqueadas)' : '(Peças desbloqueadas — o stock será ajustado ao gravar)';
+ if (lbl) lbl.textContent = pecasBloqueadas ? '(Peças bloqueadas — mudar o Estado ajusta o stock ao gravar)' : '(Peças desbloqueadas — o stock será ajustado ao gravar)';
  if (lbl) lbl.style.color = pecasBloqueadas ? 'var(--warning)' : 'var(--accent)';
  if (btn) btn.textContent = pecasBloqueadas ? '🔓 Corrigir Peças' : '🔒 Bloquear Peças';
  }
@@ -1296,15 +1341,84 @@
 
  function formatDate(d) { return d ? d.split("-").reverse().join("/") : ""; }
 
+ // --- LISTA DE ENCOMENDAS (peças necessárias para dentes em Planeamento) ---
+ function computeEncomendas() {
+  const necessidades = {};
+  SurgeriesLog.forEach(f => (f.dentesTratados || []).forEach(d => {
+   if (d.estado !== 'Planeamento') return;
+   [d.implante, d.pilar].concat(getOutrosArray(d)).filter(Boolean).forEach(p => {
+    necessidades[p] = (necessidades[p] || 0) + 1;
+   });
+  }));
+  return Object.keys(necessidades).sort().map(ref => {
+   const nec = necessidades[ref]; const st = CurrentStock[ref] || 0;
+   return { ref, desc: Catalogo[ref] || '(fora do catálogo)', necessario: nec, stock: st, falta: Math.max(0, nec - st) };
+  });
+ }
+
+ function showEncomendas() {
+  const lista = computeEncomendas();
+  const tbody = document.getElementById('encomendasBody');
+  const info = document.getElementById('encomendas-info');
+  if (lista.length === 0) {
+   tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:#999; padding:15px;">Não há dentes/zonas em "Planeamento" com peças associadas.</td></tr>';
+   info.innerText = 'Peças necessárias para os dentes/zonas em estado "Planeamento", comparadas com o stock atual.';
+  } else {
+   const totalFalta = lista.reduce((s, i) => s + i.falta, 0);
+   info.innerText = totalFalta > 0
+    ? `Há ${totalFalta} peça(s) em falta para os planeamentos ativos.`
+    : 'O stock atual cobre todas as peças dos planeamentos ativos. Nada a encomendar.';
+   tbody.innerHTML = lista.map(i => {
+    const badge = i.falta > 0
+     ? `<span class="badge badge-danger">${i.falta}</span>`
+     : `<span class="badge badge-success">0</span>`;
+    return `<tr><td><strong>${escapeHTML(i.ref)}</strong></td><td style="font-size:0.85em;">${escapeHTML(i.desc)}</td><td style="text-align:center;">${i.necessario}</td><td style="text-align:center;">${i.stock}</td><td style="text-align:center;">${badge}</td></tr>`;
+   }).join('');
+  }
+  document.getElementById('encomendas-modal').classList.add('show');
+ }
+
+ function exportEncomendasPDF() {
+  const lista = computeEncomendas().filter(i => i.falta > 0);
+  if (lista.length === 0) { showToast("Nada a encomendar — o stock cobre os planeamentos.", "warning"); return; }
+  const { jsPDF } = window.jspdf;
+  const pdfStr = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const doc = new jsPDF();
+  doc.setFillColor(12, 60, 96); doc.rect(0, 0, 220, 25, 'F');
+  doc.setTextColor(255, 255, 255); doc.setFont("Helvetica", "bold"); doc.setFontSize(11);
+  doc.text("Clínica Médico-Dentária de Aver-o-Mar, Lda", 15, 11);
+  doc.setFontSize(8); doc.setFont("Helvetica", "normal"); doc.setTextColor(155, 194, 230);
+  doc.text("Diretor Clínico: Luís Zeferino (OMD 01162)", 15, 17);
+  doc.setTextColor(51, 51, 51); doc.setFontSize(14); doc.setFont("Helvetica", "bold");
+  doc.text(pdfStr("Encomenda de Peças - Cirurgias em Planeamento"), 15, 36);
+  doc.setFontSize(10); doc.setFont("Helvetica", "normal");
+  doc.text(`Emissão: ${new Date().toLocaleDateString('pt-PT')}`, 160, 36);
+  doc.autoTable({
+   startY: 44,
+   head: [['Referência', 'Descrição', 'Necessário', 'Em Stock', 'A Encomendar']],
+   body: lista.map(i => [i.ref, pdfStr(i.desc), i.necessario, i.stock, i.falta]),
+   theme: 'grid', headStyles: { fillColor: [22, 90, 140] },
+   columnStyles: { 2: { halign: 'center' }, 3: { halign: 'center' }, 4: { halign: 'center', fontStyle: 'bold' } }
+  });
+  const total = lista.reduce((s, i) => s + i.falta, 0);
+  doc.setFont("Helvetica", "bold"); doc.setFontSize(10);
+  doc.text(pdfStr(`Total de peças a encomendar: ${total}`), 15, doc.lastAutoTable.finalY + 10);
+  doc.save('Encomenda_Galimplant_' + new Date().toISOString().split('T')[0] + '.pdf');
+  showToast("PDF da encomenda descarregado.");
+ }
+
  function updateDashboard() {
  document.getElementById('dashTotalFichas').innerText = SurgeriesLog.length;
  let alertas = 0; Object.keys(Catalogo).forEach(r => { if((CurrentStock[r]||0)<=2) alertas++; });
  document.getElementById('dashStock').innerText = alertas;
  
- let consultas = 0; const hoje = new Date();
+ // Comparação só por data (meia-noite local) para que consultas marcadas
+ // para HOJE contem como urgentes (new Date('yyyy-mm-dd') é meia-noite UTC).
+ let consultas = 0; const hoje = new Date(); hoje.setHours(0,0,0,0);
+ const diasAte = (d) => Math.round((new Date(d + 'T00:00:00') - hoje) / 86400000);
  SurgeriesLog.forEach(f => {
  if(f.nextAppt) {
- const diff = Math.floor((new Date(f.nextAppt) - hoje) / (1000*60*60*24));
+ const diff = diasAte(f.nextAppt);
  if(diff >= 0 && diff <= 7) consultas++;
  }
  });
@@ -1313,13 +1427,12 @@
  _elA.style.cursor=consultas>0?'pointer':'default';
  _elA.title=consultas>0?'Clique para ver as consultas urgentes':'';
  _elA.onclick=consultas>0?function(){
-  var _h=new Date();
   var _u=SurgeriesLog.filter(function(f){
    if(!f.nextAppt)return false;
-   var _d=Math.floor((new Date(f.nextAppt)-_h)/86400000);
+   var _d=diasAte(f.nextAppt);
    return _d>=0&&_d<=7;
   });
-  showConfirm('Consultas nos próximos 7 dias:\n\n'+_u.map(function(f){return f.paciente+' — '+formatDate(f.nextAppt);}).join('\n'),function(){},'Consultas Urgentes');
+  showConfirm('Consultas nos próximos 7 dias:\n\n'+_u.map(function(f){return f.paciente+' — '+formatDate(f.nextAppt);}).join('\n'),function(){},'Consultas Urgentes',true);
  }:null;
 
  let _mb = 0;
@@ -1445,6 +1558,7 @@
  </div>`;
  
  const printWindow = window.open('', '_blank');
+ if (!printWindow) { showToast("O browser bloqueou a janela de impressão. Autorize popups para este site.", "error"); return; }
  printWindow.document.write('<html><head><title>Imprimir Ficha</title></head><body>'); printWindow.document.write(html); printWindow.document.write('</body></html>'); printWindow.document.close();
  setTimeout(() => { printWindow.print(); }, 200);
  }
@@ -1517,6 +1631,10 @@
  }
 
  function importBackup(event) {
+ const file = event.target.files && event.target.files[0];
+ event.target.value = ''; // Permite reimportar o mesmo ficheiro e limpa em caso de cancelamento
+ if (!file) return;
+ showConfirm("Importar este backup vai SUBSTITUIR todos os dados atuais (fichas, stock e catálogo personalizado). Continuar?", () => {
  const reader = new FileReader();
  reader.onload = function() {
  try {
@@ -1539,9 +1657,9 @@
  showToast("Dados restaurados com sucesso!");
  }
  } catch (e) { showToast("Erro ao ler ficheiro de backup.", "error"); }
- event.target.value = ''; // Permite reimportar o mesmo ficheiro
  };
- reader.readAsText(event.target.files[0]);
+ reader.readAsText(file);
+ }, "Importar Backup");
  }
 
  function checkBackupStatus() {
@@ -1580,7 +1698,7 @@
    }).slice(0, 60);
    if (keys.length === 0) { dd.classList.remove('open'); return; }
    dd.innerHTML = keys.map(function(k) {
-     return '<div class="ac-item" onmousedown="acSelect(this)" data-val="' + k + '"><strong>' + k + '</strong><span>' + (Catalogo[k] || '') + '</span></div>';
+     return '<div class="ac-item" onmousedown="acSelect(this)" data-val="' + escapeHTML(k) + '"><strong>' + escapeHTML(k) + '</strong><span>' + escapeHTML(Catalogo[k] || '') + '</span></div>';
    }).join('');
    acPosition(input, dd);
    dd.classList.add('open');

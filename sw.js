@@ -1,4 +1,4 @@
-const CACHE_NAME = "galimplant-cache-v33";
+const CACHE_NAME = "galimplant-cache-v34";
 const ASSETS = [
   "./",
   "./index.html",
@@ -7,8 +7,8 @@ const ASSETS = [
   "./icon-512.png",
   "./icon-192-maskable.png",
   "./icon-512-maskable.png",
-  "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js",
-  "https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"
+  "./jspdf.umd.min.js",
+  "./jspdf.plugin.autotable.min.js"
 ];
 
 self.addEventListener("install", (event) => {

@@ -14,9 +14,10 @@
  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
  <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
- 
- <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
- <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+ <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self';">
+
+ <script src="jspdf.umd.min.js"></script>
+ <script src="jspdf.plugin.autotable.min.js"></script>
 
  <style>
  :root {
@@ -1569,9 +1570,12 @@
    '  • Todas as fichas clínicas\n' +
    '  • Todo o stock de peças\n' +
    '  • O catálogo personalizado\n\n' +
-   'Após o reset, a aplicação recomeça com o catálogo de fábrica e stock a zero.\n\n' +
-   'Confirma que fez backup antes de continuar?',
-   function() {
+   'Será feito um backup automático antes de apagar. Após o reset, a aplicação recomeça com o catálogo de fábrica e stock a zero.\n\n' +
+   'Confirma que quer continuar?',
+   async function() {
+    // Backup de segurança automático, antes de qualquer apagamento — mesmo que
+    // o utilizador não tenha feito backup manual recentemente.
+    try { await exportBackup(); } catch (e) { /* mesmo que falhe, o reset segue-se com confirmação já dada */ }
     localStorage.removeItem('galimplant_stock_v3');
     localStorage.removeItem('galimplant_surgeries_v3');
     localStorage.removeItem('galimplant_catalog_v1');
@@ -1630,15 +1634,68 @@
  localStorage.setItem('galimplant_last_backup', new Date().toISOString()); checkBackupStatus(); showToast("Backup transferido.");
  }
 
+ // Valida a estrutura de um backup importado, campo a campo, antes de o aplicar.
+ // Devolve { ok:true } ou { ok:false, erro:'...' } com a primeira falha encontrada.
+ function validateBackupData(dados) {
+  const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+  if (!dados || typeof dados !== 'object' || Array.isArray(dados)) return { ok:false, erro:'O ficheiro não contém um objeto JSON válido.' };
+
+  if (dados.stock === undefined || typeof dados.stock !== 'object' || Array.isArray(dados.stock)) return { ok:false, erro:'Campo "stock" em falta ou inválido.' };
+  for (const ref of Object.keys(dados.stock)) {
+   const v = dados.stock[ref];
+   if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) return { ok:false, erro:`Stock inválido para a referência "${ref}".` };
+  }
+
+  if (dados.historico === undefined || !Array.isArray(dados.historico)) return { ok:false, erro:'Campo "historico" em falta ou inválido.' };
+  for (let i = 0; i < dados.historico.length; i++) {
+   const f = dados.historico[i];
+   if (!f || typeof f !== 'object') return { ok:false, erro:`Ficha #${i+1} do histórico não é um objeto válido.` };
+   if (typeof f.paciente !== 'string' || !f.paciente.trim()) return { ok:false, erro:`Ficha #${i+1}: falta o nome do paciente.` };
+   if (typeof f.dataCirurgia !== 'string' || !dateRe.test(f.dataCirurgia)) return { ok:false, erro:`Ficha #${i+1} ("${f.paciente}"): data de abertura inválida.` };
+   if (f.dataNasc !== undefined && f.dataNasc !== '' && !dateRe.test(f.dataNasc)) return { ok:false, erro:`Ficha #${i+1} ("${f.paciente}"): data de nascimento inválida.` };
+   if (f.nextAppt !== undefined && f.nextAppt !== '' && !dateRe.test(f.nextAppt)) return { ok:false, erro:`Ficha #${i+1} ("${f.paciente}"): data de próxima consulta inválida.` };
+   if (f.dentesTratados !== undefined) {
+    if (!Array.isArray(f.dentesTratados)) return { ok:false, erro:`Ficha #${i+1} ("${f.paciente}"): "dentesTratados" deve ser uma lista.` };
+    for (let j = 0; j < f.dentesTratados.length; j++) {
+     const d = f.dentesTratados[j];
+     if (!d || typeof d !== 'object' || typeof d.dente !== 'string') return { ok:false, erro:`Ficha #${i+1} ("${f.paciente}"): dente/zona #${j+1} inválido.` };
+     if (d.outros !== undefined && !Array.isArray(d.outros)) return { ok:false, erro:`Ficha #${i+1} ("${f.paciente}"): campo "outros" do dente #${j+1} deve ser uma lista.` };
+    }
+   }
+  }
+
+  if (dados.catalogo !== undefined) {
+   if (typeof dados.catalogo !== 'object' || Array.isArray(dados.catalogo)) return { ok:false, erro:'Campo "catalogo" inválido.' };
+   for (const ref of Object.keys(dados.catalogo)) {
+    if (typeof dados.catalogo[ref] !== 'string') return { ok:false, erro:`Descrição inválida no catálogo para a referência "${ref}".` };
+   }
+  }
+  if (dados.catalogoDescOverrides !== undefined) {
+   if (typeof dados.catalogoDescOverrides !== 'object' || Array.isArray(dados.catalogoDescOverrides)) return { ok:false, erro:'Campo "catalogoDescOverrides" inválido.' };
+   for (const ref of Object.keys(dados.catalogoDescOverrides)) {
+    if (typeof dados.catalogoDescOverrides[ref] !== 'string') return { ok:false, erro:`Correção de descrição inválida para "${ref}".` };
+   }
+  }
+  if (dados.catalogoHiddenDefaults !== undefined) {
+   if (!Array.isArray(dados.catalogoHiddenDefaults) || dados.catalogoHiddenDefaults.some(v => typeof v !== 'string')) return { ok:false, erro:'Campo "catalogoHiddenDefaults" inválido.' };
+  }
+
+  return { ok:true };
+ }
+
  function importBackup(event) {
+ const MAX_BACKUP_BYTES = 25 * 1024 * 1024; // 25MB — bem acima de qualquer backup real desta app
  const file = event.target.files && event.target.files[0];
  event.target.value = ''; // Permite reimportar o mesmo ficheiro e limpa em caso de cancelamento
  if (!file) return;
+ if (file.size > MAX_BACKUP_BYTES) { showToast(`Ficheiro demasiado grande (${(file.size/1024/1024).toFixed(1)} MB). Backup rejeitado.`, "error"); return; }
  showConfirm("Importar este backup vai SUBSTITUIR todos os dados atuais (fichas, stock e catálogo personalizado). Continuar?", () => {
  const reader = new FileReader();
  reader.onload = function() {
  try {
  const dados = JSON.parse(reader.result);
+ const validacao = validateBackupData(dados);
+ if (!validacao.ok) { showToast(`Importação cancelada: ${validacao.erro}`, "error"); return; }
  if(dados.stock && dados.historico) {
  CurrentStock = dados.stock; SurgeriesLog = dados.historico;
  if(dados.catalogo) {

@@ -221,7 +221,7 @@
             <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
               <div>
                 <strong style="color:#fff;">&#9729;&#65039; Sincronização (Google Drive)</strong>
-                <div id="gdrive-status" style="font-size:0.8em; color:rgba(255,255,255,0.7);">Não ligado.</div>
+                <div id="gdrive-status" style="font-size:0.85em; color:#d6e6f5;">Não ligado.</div>
               </div>
               <div style="display:flex; gap:8px; flex-wrap:wrap;">
                 <button class="btn btn-success" id="gdrive-connect-btn" onclick="connectGDrive()">Ligar ao Google Drive</button>
@@ -230,13 +230,13 @@
  <button class="btn" id="gdrive-versions-btn" onclick="showVersoes()" style="display:none;">&#128336; Versões Anteriores</button>
               </div>
             </div>
-            <div id="gdrive-setup" style="margin-top:8px; font-size:0.8em; color:rgba(255,255,255,0.75);">
+            <div id="gdrive-setup" style="margin-top:8px; font-size:0.85em; color:#d6e6f5;">
               <label style="display:block; margin-bottom:4px;">Client ID OAuth do Google (uma vez por dispositivo — ver instruções):</label>
               <input type="text" id="gdriveClientId" placeholder="xxxxxxxx.apps.googleusercontent.com" style="width:100%; max-width:420px; padding:6px; border-radius:4px; border:1px solid rgba(255,255,255,0.3); background:rgba(255,255,255,0.9);">
             </div>
-            <div id="gdrive-options" style="margin-top:8px; font-size:0.8em; color:rgba(255,255,255,0.85); display:none;">
-              <label style="margin-right:14px;"><input type="checkbox" id="gdriveAutoSync" onchange="setGDriveAutoSync(this.checked)"> Sincronização automática ao gravar</label>
-              <label><input type="checkbox" id="gdriveEncrypt" onchange="toggleGDriveEncrypt(this.checked)"> Encriptar dados na nuvem (recomendado — dados de saúde)</label>
+            <div id="gdrive-options" style="margin-top:8px; font-size:0.85em; color:#ffffff; display:none;">
+              <label style="margin-right:14px; color:#ffffff; font-weight:600; cursor:pointer;"><input type="checkbox" id="gdriveAutoSync" onchange="setGDriveAutoSync(this.checked)"> Sincronização automática ao gravar</label>
+              <label style="color:#ffffff; font-weight:600; cursor:pointer;"><input type="checkbox" id="gdriveEncrypt" onchange="toggleGDriveEncrypt(this.checked)"> Encriptar dados na nuvem (recomendado — dados de saúde)</label>
             </div>
           </div>
           <div style="margin-top:12px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.2);">

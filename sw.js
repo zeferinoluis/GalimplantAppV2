@@ -2,6 +2,7 @@ const CACHE_NAME = "galimplant-cache-v35";
 const ASSETS = [
   "./",
   "./index.html",
+  "./recovery.html",
   "./manifest.json",
   "./icon-192.png",
   "./icon-512.png",

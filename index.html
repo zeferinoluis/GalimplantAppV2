@@ -185,6 +185,22 @@
  </div>
 </div>
 
+<div id="versoes-modal" class="modal-overlay">
+ <div class="modal-box" style="max-width: 520px;">
+  <h3 style="color:var(--primary);">&#128336; Versões Anteriores (Google Drive)</h3>
+  <p style="font-size:0.85em; color:#666; margin-top:0;">Cópias diárias guardadas automaticamente (até 90 dias). Restaurar substitui os dados atuais.</p>
+  <div class="table-wrapper" style="max-height: 320px;">
+   <table>
+    <thead><tr><th>Data</th><th>Tamanho</th><th></th></tr></thead>
+    <tbody id="versoesBody"></tbody>
+   </table>
+  </div>
+  <div class="modal-actions">
+   <button class="btn" style="background:#7f8c8d;" onclick="document.getElementById('versoes-modal').classList.remove('show')">Fechar</button>
+  </div>
+ </div>
+</div>
+
 <div class="container no-print">
  <header>
  <div class="logo-container">
@@ -211,6 +227,7 @@
                 <button class="btn btn-success" id="gdrive-connect-btn" onclick="connectGDrive()">Ligar ao Google Drive</button>
                 <button class="btn" id="gdrive-sync-btn" onclick="gdrivePush()" style="display:none;">Enviar agora</button>
                 <button class="btn" id="gdrive-pull-btn" onclick="gdrivePull()" style="display:none;">Transferir da nuvem</button>
+ <button class="btn" id="gdrive-versions-btn" onclick="showVersoes()" style="display:none;">&#128336; Versões Anteriores</button>
               </div>
             </div>
             <div id="gdrive-setup" style="margin-top:8px; font-size:0.8em; color:rgba(255,255,255,0.75);">
@@ -1617,7 +1634,17 @@
     populateDatalist(); renderStockTable(); renderCatalogManager();
     filterHistoryAndRender(); updateDashboard(); checkBackupStatus();
     hasUnsavedChanges = false; forceCancelEditing();
+    // Proteção: desliga a sincronização automática após o reset, para que os dados
+    // vazios deste dispositivo NUNCA sobreponham silenciosamente a cópia na nuvem.
+    // O utilizador tem de decidir ativamente: transferir da nuvem para recuperar,
+    // ou voltar a ligar a sincronização automática depois de confirmar o estado.
+    if (gdriveConnected) {
+    localStorage.setItem('galimplant_gdrive_autosync', 'false');
+    const chk = document.getElementById('gdriveAutoSync'); if (chk) chk.checked = false;
+    showToast('✓ Reset completo. A sincronização automática foi desligada por segurança — use "Transferir da nuvem" para recuperar os dados, ou volte a ligá-la manualmente.', 'success');
+    } else {
     showToast('✓ Reset completo. Aplicação reiniciada com catálogo de fábrica (285 referências).', 'success');
+    }
    },
    '⚠️ Reset Completo — Confirmação'
   );
@@ -1785,6 +1812,7 @@
  document.getElementById('gdrive-connect-btn').style.display = gdriveConnected ? 'none' : '';
  document.getElementById('gdrive-sync-btn').style.display = gdriveConnected ? '' : 'none';
  document.getElementById('gdrive-pull-btn').style.display = gdriveConnected ? '' : 'none';
+ document.getElementById('gdrive-versions-btn').style.display = gdriveConnected ? '' : 'none';
  document.getElementById('gdrive-setup').style.display = gdriveConnected ? 'none' : '';
  document.getElementById('gdrive-options').style.display = gdriveConnected ? '' : 'none';
  }
@@ -1959,10 +1987,98 @@
  localStorage.setItem('galimplant_gdrive_file_id', result.id);
  updateGDriveStatusUI('✓ Sincronizado às ' + new Date().toLocaleTimeString('pt-PT'));
  if (!silent) showToast('Dados enviados para o Google Drive.');
+ gdriveMaybePinDailySnapshot(token, result.id); // não bloqueia a UI; falhas aqui não são críticas
  } catch (e) {
  updateGDriveStatusUI('Erro ao enviar.');
  if (!silent) showToast('Falha ao enviar para o Google Drive.', 'error');
  }
+ }
+
+ // --- Histórico de versões (tipo "Time Machine"), usando as revisões nativas do Drive ---
+ const GDRIVE_MAX_SNAPSHOTS = 90; // ~3 meses de cópias diárias fixadas
+
+ async function gdriveListRevisions(token, fileId) {
+ const r = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}/revisions?fields=revisions(id,modifiedTime,keepForever,size)`, { headers: { Authorization: 'Bearer ' + token } });
+ if (!r.ok) return [];
+ const data = await r.json();
+ return data.revisions || [];
+ }
+ async function gdrivePinRevision(token, fileId, revId, pin) {
+ await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}/revisions/${revId}`, { method: 'PATCH', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify({ keepForever: pin }) });
+ }
+ async function gdriveDownloadRevision(token, fileId, revId) {
+ const r = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}/revisions/${revId}?alt=media`, { headers: { Authorization: 'Bearer ' + token } });
+ if (!r.ok) throw new Error('revision_download_failed');
+ return await r.text();
+ }
+
+ // Fixa a revisão que acabou de ser enviada como a cópia "diária" de hoje (só uma por
+ // dia, para não gastar as 200 revisões fixáveis do Drive numa questão de semanas) e
+ // liberta as fixações mais antigas acima do limite de retenção.
+ async function gdriveMaybePinDailySnapshot(token, fileId) {
+ try {
+ const metaR = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?fields=headRevisionId`, { headers: { Authorization: 'Bearer ' + token } });
+ if (!metaR.ok) return;
+ const headRevisionId = (await metaR.json()).headRevisionId;
+ if (!headRevisionId) return;
+
+ const revs = await gdriveListRevisions(token, fileId);
+ const pinned = revs.filter(r => r.keepForever).sort((a, b) => new Date(a.modifiedTime) - new Date(b.modifiedTime));
+ const hoje = new Date().toISOString().slice(0, 10);
+ const jaTemDeHoje = pinned.some(r => r.modifiedTime.slice(0, 10) === hoje);
+ if (jaTemDeHoje) return;
+
+ await gdrivePinRevision(token, fileId, headRevisionId, true);
+ const atualizados = pinned.concat([{ id: headRevisionId, modifiedTime: new Date().toISOString() }]);
+ if (atualizados.length > GDRIVE_MAX_SNAPSHOTS) {
+ const aRemover = atualizados.slice(0, atualizados.length - GDRIVE_MAX_SNAPSHOTS);
+ for (const r of aRemover) { await gdrivePinRevision(token, fileId, r.id, false); }
+ }
+ } catch (e) { /* não crítico — o envio principal já teve sucesso */ }
+ }
+
+ async function showVersoes() {
+ if (!gdriveConnected) { showToast('Ligue primeiro ao Google Drive.', 'error'); return; }
+ const fileId = localStorage.getItem('galimplant_gdrive_file_id');
+ if (!fileId) { showToast('Ainda não há nenhum ficheiro sincronizado.', 'warning'); return; }
+ try {
+ const token = await ensureGDriveToken();
+ const revs = (await gdriveListRevisions(token, fileId)).filter(r => r.keepForever).sort((a, b) => new Date(b.modifiedTime) - new Date(a.modifiedTime));
+ const tbody = document.getElementById('versoesBody');
+ if (!revs.length) {
+ tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:#999; padding:15px;">Ainda não há versões diárias guardadas. Sincronize pelo menos uma vez.</td></tr>';
+ } else {
+ tbody.innerHTML = revs.map(r => {
+ const d = new Date(r.modifiedTime);
+ const dataFmt = d.toLocaleDateString('pt-PT') + ' ' + d.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' });
+ const kb = r.size ? (parseInt(r.size) / 1024).toFixed(1) + ' KB' : '—';
+ return `<tr><td>${dataFmt}</td><td>${kb}</td><td><button class="btn btn-small" onclick="restoreGDriveVersion('${r.id}')">Restaurar</button></td></tr>`;
+ }).join('');
+ }
+ document.getElementById('versoes-modal').classList.add('show');
+ } catch (e) { showToast('Falha ao obter o histórico de versões.', 'error'); }
+ }
+
+ function restoreGDriveVersion(revId) {
+ showConfirm('Restaurar esta versão vai SUBSTITUIR os dados atuais (fichas, stock e catálogo) pelos desta cópia. Continuar?', async () => {
+ try {
+ const token = await ensureGDriveToken();
+ const fileId = localStorage.getItem('galimplant_gdrive_file_id');
+ let text = await gdriveDownloadRevision(token, fileId, revId);
+ if (gdriveIsEncryptedPayload(text)) {
+ if (!gdrivePassphrase && !promptGDrivePassphrase()) return;
+ try { text = await gdriveDecryptText(text, gdrivePassphrase); }
+ catch (e) { showToast('Palavra-passe incorreta — não foi possível desencriptar.', 'error'); gdrivePassphrase = null; return; }
+ }
+ const dados = JSON.parse(text);
+ const validacao = validateBackupData(dados);
+ if (!validacao.ok) { showToast('Versão inválida: ' + validacao.erro, 'error'); return; }
+ applyImportedBackup(dados);
+ document.getElementById('versoes-modal').classList.remove('show');
+ showToast('Versão restaurada. Sincronize para atualizar a cópia atual na nuvem.', 'success');
+ scheduleGDriveAutoSync();
+ } catch (e) { showToast('Falha ao restaurar a versão.', 'error'); }
+ }, '⚠️ Restaurar Versão Anterior');
  }
 
  async function gdrivePull() {

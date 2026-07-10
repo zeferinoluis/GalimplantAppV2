@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://accounts.google.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://www.googleapis.com https://oauth2.googleapis.com https://accounts.google.com; frame-src https://accounts.google.com; object-src 'none'; base-uri 'self'; form-action 'self';">
+<title>Recuperação de Emergência — Galimplant</title>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+ :root { --primary:#0c3c60; --accent:#c0392b; --success:#27ae60; --warning:#e67e22; --bg:#f4f6f9; }
+ * { box-sizing: border-box; }
+ body { font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; background: var(--bg); color: #2c3e50; margin: 0; padding: 20px; }
+ .container { max-width: 720px; margin: 0 auto; }
+ header { background: var(--primary); color: #fff; padding: 18px 22px; border-radius: 10px; margin-bottom: 20px; }
+ header h1 { margin: 0 0 6px; font-size: 1.3em; }
+ header p { margin: 0; font-size: 0.85em; color: #b9d3e8; }
+ .card { background: #fff; border-radius: 10px; padding: 18px 22px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+ .card h2 { margin-top: 0; font-size: 1.05em; color: var(--primary); }
+ label { display: block; font-size: 0.85em; margin-bottom: 4px; color: #555; }
+ input[type=text], input[type=password] { width: 100%; max-width: 420px; padding: 8px; border: 1px solid #ccc; border-radius: 5px; font-size: 0.9em; margin-bottom: 10px; }
+ button { background: var(--primary); color: #fff; border: none; padding: 9px 16px; border-radius: 6px; font-size: 0.9em; cursor: pointer; margin-right: 8px; margin-bottom: 6px; }
+ button.success { background: var(--success); }
+ button.warning { background: var(--warning); }
+ button:disabled { opacity: 0.5; cursor: not-allowed; }
+ #status { font-size: 0.85em; color: #666; margin: 8px 0; white-space: pre-wrap; }
+ table { width: 100%; border-collapse: collapse; font-size: 0.85em; }
+ th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #eee; }
+ .warn-box { background: #fff4e6; border: 1px solid #e67e22; border-radius: 8px; padding: 12px 16px; font-size: 0.85em; margin-bottom: 16px; }
+ .hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="container">
+ <header>
+ <h1>&#128274; Recuperação de Emergência — Galimplant</h1>
+ <p>Página independente do aplicativo principal, só para aceder aos backups guardados no Google Drive.</p>
+ </header>
+
+ <div class="warn-box">
+ Use esta página apenas se não conseguir aceder à aplicação principal (index.html). Ela não faz gestão clínica — só permite listar e descarregar os backups já sincronizados.
+ </div>
+
+ <div class="card">
+ <h2>1. Ligação ao Google Drive</h2>
+ <label>Client ID OAuth do Google (o mesmo usado na aplicação principal):</label>
+ <input type="text" id="clientId" placeholder="xxxxxxxx.apps.googleusercontent.com">
+ <br>
+ <button class="success" id="connectBtn" onclick="connect()">Ligar ao Google Drive</button>
+ <div id="status">Não ligado.</div>
+ </div>
+
+ <div class="card hidden" id="passCard">
+ <h2>2. Palavra-passe de encriptação (se ativou essa opção)</h2>
+ <label>Só é necessária se ativou "Encriptar dados na nuvem" na aplicação principal. Deixe em branco se não usa encriptação.</label>
+ <input type="password" id="passphrase" placeholder="Palavra-passe (opcional)">
+ </div>
+
+ <div class="card hidden" id="listCard">
+ <h2>3. Versões disponíveis</h2>
+ <table>
+ <thead><tr><th>Data</th><th>Tamanho</th><th></th></tr></thead>
+ <tbody id="revBody"></tbody>
+ </table>
+ </div>
+
+ <div class="card hidden" id="viewCard">
+ <h2>4. Conteúdo</h2>
+ <p style="font-size:0.85em; color:#666;">Nº de fichas encontradas: <strong id="numFichas">-</strong></p>
+ <button onclick="downloadJSON()">&#128190; Descarregar como ficheiro .json</button>
+ <button onclick="toggleRaw()">Ver/ocultar JSON completo</button>
+ <pre id="rawView" class="hidden" style="max-height:300px; overflow:auto; background:#f8f8f8; padding:10px; border-radius:6px; font-size:0.75em;"></pre>
+ </div>
+</div>
+
+<script>
+const GDRIVE_FILE_NAME = 'galimplant_backup.json';
+const GDRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
+let tokenClient = null;
+let accessToken = null;
+let lastLoadedJSON = null;
+
+// Reaproveita o Client ID já guardado pela aplicação principal (mesmo domínio = mesmo localStorage)
+window.addEventListener('load', () => {
+ const saved = localStorage.getItem('galimplant_gdrive_clientid');
+ if (saved) document.getElementById('clientId').value = saved;
+});
+
+function setStatus(msg) { document.getElementById('status').innerText = msg; }
+
+function connect() {
+ const clientId = document.getElementById('clientId').value.trim();
+ if (!clientId) { alert('Indique o Client ID OAuth.'); return; }
+ if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
+ alert('A biblioteca do Google ainda não carregou. Verifique a ligação à internet e tente novamente.');
+ return;
+ }
+ tokenClient = google.accounts.oauth2.initTokenClient({
+ client_id: clientId,
+ scope: GDRIVE_SCOPE,
+ callback: async (resp) => {
+ if (resp.error) { setStatus('Falha na autenticação: ' + resp.error); return; }
+ accessToken = resp.access_token;
+ setStatus('Ligado. A procurar o backup...');
+ document.getElementById('passCard').classList.remove('hidden');
+ await listRevisions();
+ }
+ });
+ tokenClient.requestAccessToken({ prompt: 'consent' });
+}
+
+async function findFile() {
+ const url = 'https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&fields=files(id,name,modifiedTime)&q=' + encodeURIComponent(`name='${GDRIVE_FILE_NAME}' and trashed=false`);
+ const r = await fetch(url, { headers: { Authorization: 'Bearer ' + accessToken } });
+ if (!r.ok) throw new Error('Falha ao procurar o ficheiro (' + r.status + ')');
+ const data = await r.json();
+ return (data.files && data.files[0]) || null;
+}
+
+async function listRevisions() {
+ try {
+ const file = await findFile();
+ if (!file) { setStatus('Não foi encontrado nenhum backup nesta conta Google. Confirme que é a mesma conta usada na app.'); return; }
+ const r = await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}/revisions?fields=revisions(id,modifiedTime,keepForever,size)`, { headers: { Authorization: 'Bearer ' + accessToken } });
+ if (!r.ok) throw new Error('Falha ao listar versões (' + r.status + ')');
+ const data = await r.json();
+ let revs = (data.revisions || []).filter(x => x.keepForever);
+ // Se ainda não há nenhuma versão "diária" fixada, mostra pelo menos a versão atual (cabeçalho do ficheiro)
+ if (!revs.length) revs = [{ id: null, modifiedTime: file.modifiedTime, size: null, current: true }];
+ revs.sort((a, b) => new Date(b.modifiedTime) - new Date(a.modifiedTime));
+
+ const tbody = document.getElementById('revBody');
+ tbody.innerHTML = revs.map(rv => {
+ const d = new Date(rv.modifiedTime);
+ const dataFmt = d.toLocaleDateString('pt-PT') + ' ' + d.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' });
+ const kb = rv.size ? (parseInt(rv.size) / 1024).toFixed(1) + ' KB' : (rv.current ? 'versão atual' : '—');
+ const revIdArg = rv.id ? `'${rv.id}'` : 'null';
+ return `<tr><td>${dataFmt}</td><td>${kb}</td><td><button onclick="loadRevision('${file.id}', ${revIdArg})">Abrir</button></td></tr>`;
+ }).join('');
+ document.getElementById('listCard').classList.remove('hidden');
+ setStatus('✓ Ligado. ' + revs.length + ' versão(ões) encontrada(s).');
+ } catch (e) {
+ setStatus('Erro: ' + e.message);
+ }
+}
+
+async function loadRevision(fileId, revisionId) {
+ try {
+ setStatus('A transferir...');
+ const url = revisionId
+ ? `https://www.googleapis.com/drive/v3/files/${fileId}/revisions/${revisionId}?alt=media`
+ : `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
+ const r = await fetch(url, { headers: { Authorization: 'Bearer ' + accessToken } });
+ if (!r.ok) throw new Error('Falha ao transferir (' + r.status + ')');
+ let text = await r.text();
+
+ let parsed;
+ try { parsed = JSON.parse(text); } catch (e) { throw new Error('Conteúdo não é JSON válido.'); }
+
+ if (parsed && parsed.encrypted === true) {
+ const pass = document.getElementById('passphrase').value;
+ if (!pass) { alert('Este backup está encriptado. Introduza a palavra-passe no campo acima e tente novamente.'); setStatus('À espera da palavra-passe.'); return; }
+ text = await decryptPayload(parsed, pass);
+ try { parsed = JSON.parse(text); } catch (e) { throw new Error('Palavra-passe incorreta ou dados corrompidos.'); }
+ }
+
+ lastLoadedJSON = parsed;
+ document.getElementById('numFichas').innerText = Array.isArray(parsed.historico) ? parsed.historico.length : '?';
+ document.getElementById('rawView').innerText = JSON.stringify(parsed, null, 2);
+ document.getElementById('rawView').classList.add('hidden');
+ document.getElementById('viewCard').classList.remove('hidden');
+ setStatus('✓ Versão carregada com sucesso.');
+ } catch (e) {
+ setStatus('Erro ao abrir a versão: ' + e.message);
+ }
+}
+
+async function deriveKey(passphrase, saltB64) {
+ const enc = new TextEncoder();
+ const salt = Uint8Array.from(atob(saltB64), c => c.charCodeAt(0));
+ const baseKey = await crypto.subtle.importKey('raw', enc.encode(passphrase), 'PBKDF2', false, ['deriveKey']);
+ return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: 150000, hash: 'SHA-256' }, baseKey, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+}
+async function decryptPayload(payload, passphrase) {
+ const key = await deriveKey(passphrase, payload.salt);
+ const iv = Uint8Array.from(atob(payload.iv), c => c.charCodeAt(0));
+ const data = Uint8Array.from(atob(payload.data), c => c.charCodeAt(0));
+ const plainBuf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, data);
+ return new TextDecoder().decode(plainBuf);
+}
+
+function toggleRaw() { document.getElementById('rawView').classList.toggle('hidden'); }
+
+function downloadJSON() {
+ if (!lastLoadedJSON) return;
+ const blob = new Blob([JSON.stringify(lastLoadedJSON, null, 2)], { type: 'application/json' });
+ const a = document.createElement('a');
+ a.href = URL.createObjectURL(blob);
+ const d = new Date(); const fmt = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+ a.download = `recuperacao_galimplant_${fmt}.json`;
+ document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
+</script>
+</body>
+</html>

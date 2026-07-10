@@ -14,10 +14,11 @@
  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
  <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
- <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self';">
+ <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://accounts.google.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://www.googleapis.com https://oauth2.googleapis.com https://accounts.google.com; frame-src https://accounts.google.com; object-src 'none'; base-uri 'self'; form-action 'self';">
 
  <script src="jspdf.umd.min.js"></script>
  <script src="jspdf.plugin.autotable.min.js"></script>
+ <script src="https://accounts.google.com/gsi/client" async defer></script>
 
  <style>
  :root {
@@ -200,6 +201,27 @@
  </div>
  <span id="backup-status" class="backup-info">Último backup: A verificar...</span>
  </div>
+          <div id="gdrive-panel" style="margin-top:12px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.2);">
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+              <div>
+                <strong style="color:#fff;">&#9729;&#65039; Sincronização (Google Drive)</strong>
+                <div id="gdrive-status" style="font-size:0.8em; color:rgba(255,255,255,0.7);">Não ligado.</div>
+              </div>
+              <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                <button class="btn btn-success" id="gdrive-connect-btn" onclick="connectGDrive()">Ligar ao Google Drive</button>
+                <button class="btn" id="gdrive-sync-btn" onclick="gdrivePush()" style="display:none;">Enviar agora</button>
+                <button class="btn" id="gdrive-pull-btn" onclick="gdrivePull()" style="display:none;">Transferir da nuvem</button>
+              </div>
+            </div>
+            <div id="gdrive-setup" style="margin-top:8px; font-size:0.8em; color:rgba(255,255,255,0.75);">
+              <label style="display:block; margin-bottom:4px;">Client ID OAuth do Google (uma vez por dispositivo — ver instruções):</label>
+              <input type="text" id="gdriveClientId" placeholder="xxxxxxxx.apps.googleusercontent.com" style="width:100%; max-width:420px; padding:6px; border-radius:4px; border:1px solid rgba(255,255,255,0.3); background:rgba(255,255,255,0.9);">
+            </div>
+            <div id="gdrive-options" style="margin-top:8px; font-size:0.8em; color:rgba(255,255,255,0.85); display:none;">
+              <label style="margin-right:14px;"><input type="checkbox" id="gdriveAutoSync" onchange="setGDriveAutoSync(this.checked)"> Sincronização automática ao gravar</label>
+              <label><input type="checkbox" id="gdriveEncrypt" onchange="toggleGDriveEncrypt(this.checked)"> Encriptar dados na nuvem (recomendado — dados de saúde)</label>
+            </div>
+          </div>
           <div style="margin-top:12px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.2);">
             <button class="btn btn-accent" onclick="resetCompleto()" style="width:100%; padding:10px;">
               &#128465;&#65039; Reset Completo &mdash; Apagar Todos os Dados Locais
@@ -1109,6 +1131,7 @@
  hasUnsavedChanges = false;
  pecasBloqueadas = false;
  forceCancelEditing(); updateDashboard(); filterHistoryAndRender();
+ scheduleGDriveAutoSync();
  }
 
  function deleteSurgeryFromHistory(index) {
@@ -1126,6 +1149,7 @@
  SurgeriesLog.splice(index, 1);
  localStorage.setItem('galimplant_surgeries_v3', JSON.stringify(SurgeriesLog));
  showToast("Ficha eliminada."); updateDashboard(); filterHistoryAndRender();
+ scheduleGDriveAutoSync();
  }, "Aviso Irreversível");
  }
 
@@ -1144,7 +1168,7 @@
  localStorage.setItem('galimplant_catalog_v1', JSON.stringify(Catalogo));
  localStorage.setItem('galimplant_stock_v3', JSON.stringify(CurrentStock));
  document.getElementById('novaRef').value = ''; document.getElementById('novaDesc').value = '';
- populateDatalist(); renderStockTable(); renderCatalogManager(); showToast(`Referência adicionada.`, "success");
+ populateDatalist(); renderStockTable(); renderCatalogManager(); showToast(`Referência adicionada.`, "success"); scheduleGDriveAutoSync();
  }
 
  function renderCatalogManager() {
@@ -1204,7 +1228,7 @@
  localStorage.setItem('galimplant_catalog_v1', JSON.stringify(Catalogo));
  catalogEditingRef = null;
  populateDatalist(); renderStockTable(); renderCatalogManager();
- showToast("Referência atualizada.", "success");
+ showToast("Referência atualizada.", "success"); scheduleGDriveAutoSync();
  }
 
  function removerDoCatalogo(ref) {
@@ -1214,7 +1238,7 @@
  localStorage.setItem('galimplant_catalog_v1', JSON.stringify(Catalogo));
  localStorage.setItem('galimplant_stock_v3', JSON.stringify(CurrentStock));
  renderStockTable(); renderCatalogManager(); populateDatalist();
- showToast("Referência removida.");
+ showToast("Referência removida."); scheduleGDriveAutoSync();
  });
  }
 
@@ -1227,8 +1251,8 @@
  tbody.insertAdjacentHTML('beforeend', `<tr class="item-row"><td><strong>${escapeHTML(ref)}</strong></td><td>${escapeHTML(Catalogo[ref])}</td><td><input type="number" class="stock-input" id="input_st_${ref.replace(/[^a-zA-Z0-9]/g,'_')}" value="${qtd}" min="0" onchange="updateSingleStock('${refJs}', this.value)"></td><td>${status}</td></tr>`);
  });
  }
- function updateSingleStock(ref, val) { CurrentStock[ref] = parseInt(val) || 0; localStorage.setItem('galimplant_stock_v3', JSON.stringify(CurrentStock)); renderStockTable(); updateDashboard(); }
- function saveStockToStorage() { Object.keys(Catalogo).forEach(ref => { const _e3=document.getElementById('input_st_'+ref.replace(/[^a-zA-Z0-9]/g,'_')); CurrentStock[ref]=_e3?(parseInt(_e3.value)||0):(CurrentStock[ref]||0); }); localStorage.setItem('galimplant_stock_v3', JSON.stringify(CurrentStock)); renderStockTable(); showToast("Stock atualizado."); updateDashboard(); }
+ function updateSingleStock(ref, val) { CurrentStock[ref] = parseInt(val) || 0; localStorage.setItem('galimplant_stock_v3', JSON.stringify(CurrentStock)); renderStockTable(); updateDashboard(); scheduleGDriveAutoSync(); }
+ function saveStockToStorage() { Object.keys(Catalogo).forEach(ref => { const _e3=document.getElementById('input_st_'+ref.replace(/[^a-zA-Z0-9]/g,'_')); CurrentStock[ref]=_e3?(parseInt(_e3.value)||0):(CurrentStock[ref]||0); }); localStorage.setItem('galimplant_stock_v3', JSON.stringify(CurrentStock)); renderStockTable(); showToast("Stock atualizado."); updateDashboard(); scheduleGDriveAutoSync(); }
  function checkStockAlert(ref) { if(ref && (CurrentStock[ref] || 0) === 0 && Catalogo[ref]) showToast(`Sem stock para: ${ref}`, "warning"); }
  function filterStockTable() { const q = document.getElementById('searchStock').value.toLowerCase(); document.querySelectorAll('.item-row').forEach(r => r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none'); }
 
@@ -1599,8 +1623,12 @@
   );
  }
 
+ function buildBackupObject() {
+ return { stock: CurrentStock, historico: SurgeriesLog, catalogo: Catalogo, catalogoDescOverrides: CatalogDescOverrides, catalogoHiddenDefaults: CatalogHiddenDefaults };
+ }
+
  async function exportBackup() {
- const jsonStr = JSON.stringify({ stock: CurrentStock, historico: SurgeriesLog, catalogo: Catalogo, catalogoDescOverrides: CatalogDescOverrides, catalogoHiddenDefaults: CatalogHiddenDefaults });
+ const jsonStr = JSON.stringify(buildBackupObject());
  const dataH = new Date(); const dFormat = `${dataH.getFullYear()}-${(dataH.getMonth()+1).toString().padStart(2,'0')}-${dataH.getDate().toString().padStart(2,'0')}_${dataH.getHours().toString().padStart(2,'0')}h${dataH.getMinutes().toString().padStart(2,'0')}`;
  // Nota: usa-se .txt em vez de .json porque o Web Share API do Chromium/Android
  // só permite partilhar ficheiros com extensões numa lista fixa (imagens, áudio, vídeo, texto),
@@ -1683,6 +1711,26 @@
   return { ok:true };
  }
 
+ // Aplica um objeto de backup já validado ao estado da aplicação e persiste-o
+ // localmente. Partilhada pela importação manual de ficheiro e pela sincronização
+ // com o Google Drive.
+ function applyImportedBackup(dados) {
+ CurrentStock = dados.stock; SurgeriesLog = dados.historico;
+ if (dados.catalogo) {
+  CatalogDescOverrides = dados.catalogoDescOverrides || {};
+  CatalogHiddenDefaults = dados.catalogoHiddenDefaults || [];
+  Catalogo = Object.assign({}, catalogoPreDefinido);
+  Object.keys(dados.catalogo).forEach(function(k) { if (!catalogoPreDefinido[k]) Catalogo[k] = dados.catalogo[k]; });
+  applyCatalogAdjustments();
+  localStorage.setItem('galimplant_catalog_v1', JSON.stringify(Catalogo));
+  localStorage.setItem('galimplant_catalog_descoverrides_v1', JSON.stringify(CatalogDescOverrides));
+  localStorage.setItem('galimplant_catalog_hidden_v1', JSON.stringify(CatalogHiddenDefaults));
+ }
+ localStorage.setItem('galimplant_stock_v3', JSON.stringify(CurrentStock));
+ localStorage.setItem('galimplant_surgeries_v3', JSON.stringify(SurgeriesLog));
+ populateDatalist(); renderStockTable(); renderCatalogManager(); filterHistoryAndRender(); updateDashboard();
+ }
+
  function importBackup(event) {
  const MAX_BACKUP_BYTES = 25 * 1024 * 1024; // 25MB — bem acima de qualquer backup real desta app
  const file = event.target.files && event.target.files[0];
@@ -1696,23 +1744,8 @@
  const dados = JSON.parse(reader.result);
  const validacao = validateBackupData(dados);
  if (!validacao.ok) { showToast(`Importação cancelada: ${validacao.erro}`, "error"); return; }
- if(dados.stock && dados.historico) {
- CurrentStock = dados.stock; SurgeriesLog = dados.historico;
- if(dados.catalogo) {
-  CatalogDescOverrides = dados.catalogoDescOverrides || {};
-  CatalogHiddenDefaults = dados.catalogoHiddenDefaults || [];
-  Catalogo = Object.assign({}, catalogoPreDefinido);
-  Object.keys(dados.catalogo).forEach(function(k) { if (!catalogoPreDefinido[k]) Catalogo[k] = dados.catalogo[k]; });
-  applyCatalogAdjustments();
-  localStorage.setItem('galimplant_catalog_v1', JSON.stringify(Catalogo));
-  localStorage.setItem('galimplant_catalog_descoverrides_v1', JSON.stringify(CatalogDescOverrides));
-  localStorage.setItem('galimplant_catalog_hidden_v1', JSON.stringify(CatalogHiddenDefaults));
- }
- localStorage.setItem('galimplant_stock_v3', JSON.stringify(CurrentStock));
- localStorage.setItem('galimplant_surgeries_v3', JSON.stringify(SurgeriesLog));
- populateDatalist(); renderStockTable(); renderCatalogManager(); filterHistoryAndRender(); updateDashboard();
+ applyImportedBackup(dados);
  showToast("Dados restaurados com sucesso!");
- }
  } catch (e) { showToast("Erro ao ler ficheiro de backup.", "error"); }
  };
  reader.readAsText(file);
@@ -1726,6 +1759,250 @@
  st.innerText = `Último backup: há ${dias} dias`;
  if (dias > 7) { st.style.color = "var(--warning)"; setTimeout(() => showToast(`Faça o backup de segurança, passou 1 semana.`, 'warning'), 1500); } else { st.style.color = "#9bc2e6"; }
  }
+
+ /* ══════════════ Sincronização com o Google Drive (appDataFolder) ══════════════
+  * Guarda um único ficheiro JSON na pasta privada da app dentro do Drive do
+  * utilizador (invisível no Drive normal, acessível só por esta app). Cada
+  * dispositivo autentica-se com a mesma conta Google e envia/recebe o mesmo
+  * ficheiro, com uma verificação simples de conflito baseada em modifiedTime
+  * (adequado a "um dispositivo de cada vez"; não é edição concorrente em tempo real).
+  */
+ const GDRIVE_FILE_NAME = 'galimplant_backup.json';
+ const GDRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
+ let gdriveTokenClient = null;
+ let gdriveAccessToken = null;
+ let gdriveTokenExpiry = 0;
+ let gdriveConnected = false;
+ let gdrivePassphrase = null; // nunca persistida — só em memória, por sessão
+ let gdriveAutoSyncTimer = null;
+
+ function gdriveAutoSyncEnabled() { return localStorage.getItem('galimplant_gdrive_autosync') === 'true'; }
+ function gdriveEncryptEnabled() { return localStorage.getItem('galimplant_gdrive_encrypt') === 'true'; }
+
+ function updateGDriveStatusUI(msg) {
+ const st = document.getElementById('gdrive-status');
+ if (st && msg) st.innerText = msg;
+ document.getElementById('gdrive-connect-btn').style.display = gdriveConnected ? 'none' : '';
+ document.getElementById('gdrive-sync-btn').style.display = gdriveConnected ? '' : 'none';
+ document.getElementById('gdrive-pull-btn').style.display = gdriveConnected ? '' : 'none';
+ document.getElementById('gdrive-setup').style.display = gdriveConnected ? 'none' : '';
+ document.getElementById('gdrive-options').style.display = gdriveConnected ? '' : 'none';
+ }
+
+ function connectGDrive() {
+ const inputEl = document.getElementById('gdriveClientId');
+ const clientId = (inputEl.value.trim()) || localStorage.getItem('galimplant_gdrive_clientid') || '';
+ if (!clientId) { showToast('Indique o Client ID OAuth do Google antes de ligar.', 'error'); return; }
+ if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
+ showToast('A biblioteca do Google ainda não carregou (verifique a ligação à internet) — tente novamente em instantes.', 'error');
+ return;
+ }
+ localStorage.setItem('galimplant_gdrive_clientid', clientId);
+ gdriveTokenClient = google.accounts.oauth2.initTokenClient({
+ client_id: clientId,
+ scope: GDRIVE_SCOPE,
+ callback: async (resp) => {
+ if (resp.error) { showToast('Autenticação Google falhou: ' + resp.error, 'error'); return; }
+ gdriveAccessToken = resp.access_token;
+ gdriveTokenExpiry = Date.now() + (resp.expires_in * 1000);
+ gdriveConnected = true;
+ document.getElementById('gdriveAutoSync').checked = gdriveAutoSyncEnabled();
+ document.getElementById('gdriveEncrypt').checked = gdriveEncryptEnabled();
+ updateGDriveStatusUI('Ligado. A verificar dados na nuvem...');
+ await gdriveCheckOnConnect();
+ }
+ });
+ gdriveTokenClient.requestAccessToken({ prompt: 'consent' });
+ }
+
+ function disconnectGDrive() {
+ gdriveConnected = false; gdriveAccessToken = null; gdrivePassphrase = null;
+ updateGDriveStatusUI('Não ligado.');
+ }
+
+ function ensureGDriveToken() {
+ return new Promise((resolve, reject) => {
+ if (gdriveAccessToken && Date.now() < gdriveTokenExpiry - 60000) { resolve(gdriveAccessToken); return; }
+ if (!gdriveTokenClient) { reject(new Error('not_connected')); return; }
+ gdriveTokenClient.callback = (resp) => {
+ if (resp.error) { reject(new Error(resp.error)); return; }
+ gdriveAccessToken = resp.access_token; gdriveTokenExpiry = Date.now() + (resp.expires_in * 1000);
+ resolve(gdriveAccessToken);
+ };
+ gdriveTokenClient.requestAccessToken({ prompt: '' });
+ });
+ }
+
+ async function gdriveFindFile(token) {
+ const url = 'https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&fields=files(id,name,modifiedTime)&q=' + encodeURIComponent(`name='${GDRIVE_FILE_NAME}' and trashed=false`);
+ const r = await fetch(url, { headers: { Authorization: 'Bearer ' + token } });
+ if (!r.ok) throw new Error('gdrive_list_failed');
+ const data = await r.json();
+ return (data.files && data.files[0]) || null;
+ }
+
+ async function gdriveGetMeta(token, fileId) {
+ const r = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?fields=id,modifiedTime`, { headers: { Authorization: 'Bearer ' + token } });
+ if (!r.ok) throw new Error('gdrive_meta_failed');
+ return await r.json();
+ }
+
+ async function gdriveDownload(token, fileId) {
+ const r = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, { headers: { Authorization: 'Bearer ' + token } });
+ if (!r.ok) throw new Error('gdrive_download_failed');
+ return await r.text();
+ }
+
+ async function gdriveUpload(token, fileId, contentStr) {
+ const metadata = { name: GDRIVE_FILE_NAME, mimeType: 'application/json' };
+ if (!fileId) metadata.parents = ['appDataFolder'];
+ const boundary = 'galimplant_boundary_' + Date.now();
+ const body = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
+ `--${boundary}\r\nContent-Type: application/json\r\n\r\n${contentStr}\r\n--${boundary}--`;
+ const url = fileId
+ ? `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`
+ : `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart`;
+ const r = await fetch(url, { method: fileId ? 'PATCH' : 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': `multipart/related; boundary=${boundary}` }, body });
+ if (!r.ok) throw new Error('gdrive_upload_failed');
+ return await r.json();
+ }
+
+ // --- Encriptação opcional (AES-GCM, chave derivada da palavra-passe por PBKDF2) ---
+ async function deriveGDriveKey(passphrase, saltB64) {
+ const enc = new TextEncoder();
+ const salt = saltB64 ? Uint8Array.from(atob(saltB64), c => c.charCodeAt(0)) : crypto.getRandomValues(new Uint8Array(16));
+ const baseKey = await crypto.subtle.importKey('raw', enc.encode(passphrase), 'PBKDF2', false, ['deriveKey']);
+ const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: 150000, hash: 'SHA-256' }, baseKey, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+ return { key, saltB64: btoa(String.fromCharCode(...salt)) };
+ }
+ async function gdriveEncryptText(plainText, passphrase) {
+ const { key, saltB64 } = await deriveGDriveKey(passphrase, null);
+ const iv = crypto.getRandomValues(new Uint8Array(12));
+ const cipherBuf = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plainText));
+ return JSON.stringify({ encrypted: true, v: 1, salt: saltB64, iv: btoa(String.fromCharCode(...iv)), data: btoa(String.fromCharCode(...new Uint8Array(cipherBuf))) });
+ }
+ async function gdriveDecryptText(payloadStr, passphrase) {
+ const payload = JSON.parse(payloadStr);
+ const { key } = await deriveGDriveKey(passphrase, payload.salt);
+ const iv = Uint8Array.from(atob(payload.iv), c => c.charCodeAt(0));
+ const data = Uint8Array.from(atob(payload.data), c => c.charCodeAt(0));
+ const plainBuf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, data);
+ return new TextDecoder().decode(plainBuf);
+ }
+ function gdriveIsEncryptedPayload(text) {
+ try { const p = JSON.parse(text); return !!(p && p.encrypted === true); } catch (e) { return false; }
+ }
+ function promptGDrivePassphrase() {
+ const pass = window.prompt('Palavra-passe de encriptação dos dados na nuvem (a mesma em todos os dispositivos):');
+ if (!pass) return false;
+ gdrivePassphrase = pass; return true;
+ }
+ function toggleGDriveEncrypt(checked) {
+ if (checked && !gdrivePassphrase) { if (!promptGDrivePassphrase()) { document.getElementById('gdriveEncrypt').checked = false; return; } }
+ localStorage.setItem('galimplant_gdrive_encrypt', checked ? 'true' : 'false');
+ showToast(checked ? 'Encriptação ativada — o próximo envio já vai encriptado.' : 'Encriptação desativada.');
+ }
+ function setGDriveAutoSync(checked) {
+ localStorage.setItem('galimplant_gdrive_autosync', checked ? 'true' : 'false');
+ }
+
+ // No primeiro "Ligar", compara com o que já existe na nuvem e sugere a ação certa.
+ async function gdriveCheckOnConnect() {
+ try {
+ const token = await ensureGDriveToken();
+ const remote = await gdriveFindFile(token);
+ const lastSync = localStorage.getItem('galimplant_gdrive_last_sync_time');
+ if (!remote) {
+ updateGDriveStatusUI('Ligado — ainda sem backup na nuvem.');
+ showConfirm('Ainda não existe nenhum backup na nuvem para esta conta. Deseja enviar os dados deste dispositivo agora?', () => gdrivePush(), 'Google Drive');
+ return;
+ }
+ if (!lastSync || remote.modifiedTime > lastSync) {
+ updateGDriveStatusUI('Ligado — há dados mais recentes na nuvem.');
+ showConfirm('Há um backup na nuvem (possivelmente de outro dispositivo) que ainda não foi transferido para este dispositivo. Deseja transferi-lo agora? (os dados locais não gravados serão substituídos)', () => gdrivePull(), 'Google Drive — Dados Mais Recentes na Nuvem');
+ } else {
+ updateGDriveStatusUI('✓ Sincronizado.');
+ }
+ } catch (e) {
+ updateGDriveStatusUI('Erro ao verificar a nuvem.');
+ }
+ }
+
+ async function gdrivePush(silent) {
+ if (!gdriveConnected) { showToast('Ligue primeiro ao Google Drive.', 'error'); return; }
+ try {
+ const token = await ensureGDriveToken();
+ const remote = await gdriveFindFile(token);
+ const lastSync = localStorage.getItem('galimplant_gdrive_last_sync_time');
+ if (remote && lastSync && remote.modifiedTime > lastSync) {
+ updateGDriveStatusUI('⚠️ Conflito — veja o aviso.');
+ showConfirm('Existe uma versão mais recente na nuvem (provavelmente de outro dispositivo) que ainda não foi transferida para aqui. Se continuar, essa versão será SUBSTITUÍDA pelos dados deste dispositivo.\n\nRecomendado: cancele e use "Transferir da nuvem" primeiro.', () => gdrivePushForce(token, remote.id, silent), '⚠️ Conflito de Sincronização');
+ return;
+ }
+ await gdrivePushForce(token, remote ? remote.id : null, silent);
+ } catch (e) {
+ updateGDriveStatusUI('Erro ao sincronizar.');
+ if (!silent) showToast('Falha ao enviar para o Google Drive.', 'error');
+ }
+ }
+
+ async function gdrivePushForce(token, fileId, silent) {
+ try {
+ let payload = JSON.stringify(buildBackupObject());
+ if (gdriveEncryptEnabled()) {
+ if (!gdrivePassphrase && !promptGDrivePassphrase()) return;
+ payload = await gdriveEncryptText(payload, gdrivePassphrase);
+ }
+ const result = await gdriveUpload(token, fileId, payload);
+ const meta = await gdriveGetMeta(token, result.id);
+ localStorage.setItem('galimplant_gdrive_last_sync_time', meta.modifiedTime);
+ localStorage.setItem('galimplant_gdrive_file_id', result.id);
+ updateGDriveStatusUI('✓ Sincronizado às ' + new Date().toLocaleTimeString('pt-PT'));
+ if (!silent) showToast('Dados enviados para o Google Drive.');
+ } catch (e) {
+ updateGDriveStatusUI('Erro ao enviar.');
+ if (!silent) showToast('Falha ao enviar para o Google Drive.', 'error');
+ }
+ }
+
+ async function gdrivePull() {
+ if (!gdriveConnected) { showToast('Ligue primeiro ao Google Drive.', 'error'); return; }
+ try {
+ const token = await ensureGDriveToken();
+ const remote = await gdriveFindFile(token);
+ if (!remote) { showToast('Ainda não existe nenhum backup no Google Drive.', 'warning'); return; }
+ let text = await gdriveDownload(token, remote.id);
+ if (gdriveIsEncryptedPayload(text)) {
+ if (!gdrivePassphrase && !promptGDrivePassphrase()) return;
+ try { text = await gdriveDecryptText(text, gdrivePassphrase); }
+ catch (e) { showToast('Palavra-passe incorreta — não foi possível desencriptar os dados da nuvem.', 'error'); gdrivePassphrase = null; return; }
+ }
+ const dados = JSON.parse(text);
+ const validacao = validateBackupData(dados);
+ if (!validacao.ok) { showToast('Backup na nuvem inválido: ' + validacao.erro, 'error'); return; }
+ applyImportedBackup(dados);
+ localStorage.setItem('galimplant_gdrive_last_sync_time', remote.modifiedTime);
+ updateGDriveStatusUI('✓ Sincronizado às ' + new Date().toLocaleTimeString('pt-PT'));
+ showToast('Dados atualizados a partir do Google Drive.');
+ } catch (e) {
+ updateGDriveStatusUI('Erro ao transferir.');
+ showToast('Falha ao transferir do Google Drive.', 'error');
+ }
+ }
+
+ // Chamado a partir dos pontos onde os dados mudam (gravar ficha, stock, catálogo).
+ // Debounce de alguns segundos para agrupar alterações seguidas num único envio silencioso.
+ function scheduleGDriveAutoSync() {
+ if (!gdriveConnected || !gdriveAutoSyncEnabled()) return;
+ clearTimeout(gdriveAutoSyncTimer);
+ gdriveAutoSyncTimer = setTimeout(() => gdrivePush(true), 4000);
+ }
+
+ window.addEventListener('load', () => {
+ if (localStorage.getItem('galimplant_gdrive_clientid')) {
+ document.getElementById('gdriveClientId').value = localStorage.getItem('galimplant_gdrive_clientid');
+ }
+ });
 
  /* ── Custom Autocomplete Functions ── */
  var reImplante = /^(IPX |IPXC |ICI |ICIC )/;

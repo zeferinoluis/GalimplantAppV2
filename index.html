@@ -30,13 +30,31 @@
  body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: var(--bg); color: var(--text); margin: 0; padding: 20px; }
  .container { max-width: 1400px; margin: 0 auto; }
 
- header { background-color: var(--primary); color: white; padding: 15px 25px; border-radius: 8px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+ header { background-color: var(--primary); color: white; padding: 18px 25px; border-radius: 8px; margin-bottom: 25px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
  .logo-container { display: flex; align-items: center; gap: 15px; }
  .logo-text { display: flex; flex-direction: column; }
  .logo-main { font-size: 20px; font-weight: 700; color: #ffffff; line-height: 1.2; }
  .logo-sub { font-size: 12px; font-weight: 400; color: #9bc2e6; margin-top: 3px; line-height: 1; }
  .header-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
  .backup-info { font-size: 0.8em; color: #9bc2e6; }
+ .header-panels { display: grid; grid-template-columns: 0.9fr 1.6fr 0.9fr; gap: 0; margin-top: 16px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.18); align-items: stretch; }
+ .header-panel { padding: 0 20px; display: flex; flex-direction: column; gap: 10px; border-left: 1px solid rgba(255,255,255,0.18); }
+ .header-panel:first-child { padding-left: 0; border-left: none; }
+ .header-panel-title { font-size: 0.78em; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; color: #9bc2e6; display: flex; align-items: center; gap: 6px; }
+ .header-panel-title.danger-title { color: #ffb4a8; }
+ .header-panel .btn { padding: 8px 14px; font-size: 0.85em; width: 100%; }
+ .header-panel-row { display: flex; gap: 8px; flex-wrap: wrap; }
+ .header-panel-row .btn { flex: 1; min-width: 110px; }
+ .gdrive-checks { display: flex; flex-direction: column; gap: 4px; font-size: 0.8em; }
+ .gdrive-checks label { display: flex; align-items: center; gap: 6px; font-weight: 600; cursor: pointer; color: #e8f1fa; }
+ .header-panel-danger { justify-content: center; }
+ .header-panel-danger .btn-accent { padding: 10px 14px; }
+ .header-panel-danger p { font-size: 0.72em; color: rgba(255,255,255,0.55); margin: 0; text-align: center; line-height: 1.35; }
+ @media (max-width: 900px) {
+ .header-panels { grid-template-columns: 1fr; gap: 16px; }
+ .header-panel { border-left: none; border-top: 1px solid rgba(255,255,255,0.18); padding: 14px 0 0; }
+ .header-panel:first-child { border-top: none; padding-top: 0; }
+ }
 
  /* Dashboard */
  .dashboard-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 25px; }
@@ -209,44 +227,49 @@
  <span class="logo-sub">Diretor Clínico: Luís Zeferino (OMD 01162) | Rua Aquilino Ribeiro, 315 4900-441 Viana do Castelo</span>
  </div>
  </div>
- <div class="header-actions">
- <div>
- <button class="btn btn-success" onclick="exportBackup()">Exportar Backup (JSON)</button>
- <button class="btn" onclick="document.getElementById('importFile').click()">Importar Backup</button>
+
+ <div class="header-panels">
+
+ <div class="header-panel">
+ <span class="header-panel-title">&#128190; Backup Local</span>
+ <div class="header-panel-row">
+ <button class="btn btn-success" onclick="exportBackup()">Exportar (JSON)</button>
+ <button class="btn" onclick="document.getElementById('importFile').click()">Importar</button>
  <input type="file" id="importFile" style="display:none" onchange="importBackup(event)">
  </div>
  <span id="backup-status" class="backup-info">Último backup: A verificar...</span>
  </div>
-          <div id="gdrive-panel" style="margin-top:12px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.2);">
-            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
-              <div>
-                <strong style="color:#fff;">&#9729;&#65039; Sincronização (Google Drive)</strong>
-                <div id="gdrive-status" style="font-size:0.85em; color:#d6e6f5;">Não ligado.</div>
-              </div>
-              <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                <button class="btn btn-success" id="gdrive-connect-btn" onclick="connectGDrive()">Ligar ao Google Drive</button>
-                <button class="btn" id="gdrive-sync-btn" onclick="gdrivePush()" style="display:none;">Enviar agora</button>
-                <button class="btn" id="gdrive-pull-btn" onclick="gdrivePull()" style="display:none;">Transferir da nuvem</button>
+
+ <div class="header-panel">
+ <span class="header-panel-title">&#9729;&#65039; Sincronização (Google Drive)</span>
+ <div id="gdrive-status" style="font-size:0.85em; color:#d6e6f5;">Não ligado.</div>
+ <div id="gdrive-panel">
+ <div class="header-panel-row">
+ <button class="btn btn-success" id="gdrive-connect-btn" onclick="connectGDrive()">Ligar ao Google Drive</button>
+ <button class="btn" id="gdrive-sync-btn" onclick="gdrivePush()" style="display:none;">Enviar agora</button>
+ <button class="btn" id="gdrive-pull-btn" onclick="gdrivePull()" style="display:none;">Transferir da nuvem</button>
  <button class="btn" id="gdrive-versions-btn" onclick="showVersoes()" style="display:none;">&#128336; Versões Anteriores</button>
-              </div>
-            </div>
-            <div id="gdrive-setup" style="margin-top:8px; font-size:0.85em; color:#d6e6f5;">
-              <label style="display:block; margin-bottom:4px;">Client ID OAuth do Google (uma vez por dispositivo — ver instruções):</label>
-              <input type="text" id="gdriveClientId" placeholder="xxxxxxxx.apps.googleusercontent.com" style="width:100%; max-width:420px; padding:6px; border-radius:4px; border:1px solid rgba(255,255,255,0.3); background:rgba(255,255,255,0.9);">
-            </div>
-            <div id="gdrive-options" style="margin-top:8px; font-size:0.85em; color:#ffffff; display:none;">
-              <label style="margin-right:14px; color:#ffffff; font-weight:600; cursor:pointer;"><input type="checkbox" id="gdriveAutoSync" onchange="setGDriveAutoSync(this.checked)"> Sincronização automática ao gravar</label>
-              <label style="color:#ffffff; font-weight:600; cursor:pointer;"><input type="checkbox" id="gdriveEncrypt" onchange="toggleGDriveEncrypt(this.checked)"> Encriptar dados na nuvem (recomendado — dados de saúde)</label>
-            </div>
-          </div>
-          <div style="margin-top:12px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.2);">
-            <button class="btn btn-accent" onclick="resetCompleto()" style="width:100%; padding:10px;">
-              &#128465;&#65039; Reset Completo &mdash; Apagar Todos os Dados Locais
-            </button>
-            <p style="font-size:0.75em; color:rgba(255,255,255,0.6); margin:6px 0 0; text-align:center;">
-              Apaga fichas, stock e cat&aacute;logo personalizado. Restaura cat&aacute;logo de f&aacute;brica. Irrevers&iacute;vel sem backup.
-            </p>
-          </div>
+ </div>
+ <div id="gdrive-setup" style="margin-top:8px; font-size:0.8em; color:#d6e6f5;">
+ <label style="display:block; margin-bottom:4px;">Client ID OAuth do Google (uma vez por dispositivo):</label>
+ <input type="text" id="gdriveClientId" placeholder="xxxxxxxx.apps.googleusercontent.com" style="width:100%; max-width:420px; padding:6px; border-radius:4px; border:1px solid rgba(255,255,255,0.3); background:rgba(255,255,255,0.9); box-sizing:border-box;">
+ </div>
+ <div id="gdrive-options" class="gdrive-checks" style="margin-top:8px; display:none;">
+ <label><input type="checkbox" id="gdriveAutoSync" onchange="setGDriveAutoSync(this.checked)"> Sincronização automática ao gravar</label>
+ <label><input type="checkbox" id="gdriveEncrypt" onchange="toggleGDriveEncrypt(this.checked)"> Encriptar dados na nuvem (recomendado)</label>
+ </div>
+ </div>
+ </div>
+
+ <div class="header-panel header-panel-danger">
+ <span class="header-panel-title danger-title">&#9888;&#65039; Zona de Risco</span>
+ <button class="btn btn-accent" onclick="resetCompleto()">
+ &#128465;&#65039; Reset Completo
+ </button>
+ <p>Apaga fichas, stock e catálogo personalizado. Irreversível sem backup.</p>
+ </div>
+
+ </div>
  </header>
 
  <div class="dashboard-grid">
@@ -362,10 +385,20 @@
  <h2>Histórico de Fichas Clínicas</h2>
  <div style="background: #f8f9fa; padding: 15px; border-radius: 6px; border: 1px solid #ddd; margin-bottom: 20px;">
  <label style="color: var(--primary);">🔎 Pesquisar:</label>
- <div class="form-row-three">
+ <div class="form-row-four">
  <input type="text" id="searchHistoryName" placeholder="Nome / Processo..." onkeyup="clearTimeout(window._fhDebounce);window._fhDebounce=setTimeout(filterHistoryAndRender,280)">
  <select id="searchHistorySex" onchange="filterHistoryAndRender()"><option value="">Todos</option><option>Masculino</option><option>Feminino</option></select>
  <input type="date" id="searchHistoryDate" onchange="filterHistoryAndRender()" title="Data de Abertura">
+ <select id="searchHistoryEstado" onchange="filterHistoryAndRender()" title="Estágio Clínico">
+ <option value="">Todos os Estágios</option>
+ <option value="Planeamento">Planeamento</option>
+ <option value="Em osseointegração">Em osseointegração</option>
+ <option value="Tampa colocada">Tampa de cicatrização colocada</option>
+ <option value="Pilar instalado">Pilar/Trans instalado</option>
+ <option value="Coroa entregue">Coroa / Prótese Entregue</option>
+ <option value="Complicação">Aviso / Complicação</option>
+ <option value="Misto">Estado misto</option>
+ </select>
  </div>
  </div>
  <div id="surgeryHistory"></div>
@@ -1276,14 +1309,28 @@
  function filterHistoryAndRender() {
  const nameQ = document.getElementById('searchHistoryName').value.toLowerCase().trim();
  const sexQ = document.getElementById('searchHistorySex').value; const dateQ = document.getElementById('searchHistoryDate').value;
+ const estadoQ = document.getElementById('searchHistoryEstado').value;
  const histDiv = document.getElementById('surgeryHistory'); histDiv.innerHTML = '';
  
  const matched = SurgeriesLog.map((c, idx) => ({...c, originalIndex: idx})).filter(c => {
  const matchName = !nameQ || c.paciente.toLowerCase().includes(nameQ) || (c.idProcesso && c.idProcesso.toLowerCase().includes(nameQ));
  const matchSex = !sexQ || c.sexo === sexQ; const matchDate = !dateQ || c.dataCirurgia === dateQ;
- return matchName && matchSex && matchDate;
+ const matchEstado = !estadoQ || (estadoQ === 'Misto' ? getEstadoGeralPaciente(c).txt === 'Estado misto' : (c.dentesTratados || []).some(d => (d.estado || 'Planeamento') === estadoQ));
+ return matchName && matchSex && matchDate && matchEstado;
  });
  const filtered = matched.slice(0, 20);
+
+ function getEstadoGeralPaciente(c) {
+  const dentes = c.dentesTratados || [];
+  if (!dentes.length) return { txt: 'Sem dentes/zonas', cls: 'badge-warning' };
+  const estados = dentes.map(d => d.estado || 'Planeamento');
+  if (estados.includes('Complicação')) return { txt: '⚠️ Complicação', cls: 'badge-danger' };
+  const unicos = [...new Set(estados)];
+  if (unicos.length > 1) return { txt: 'Estado misto', cls: 'badge-warning' };
+  const estado = unicos[0];
+  const cls = estado === 'Coroa entregue' ? 'badge-success' : 'badge-warning';
+  return { txt: estado, cls };
+ }
 
   if (matched.length > 20) {
    histDiv.insertAdjacentHTML('beforeend','<p style="color:#e67e22;font-size:0.85em;margin:0 0 8px;">⚠️ A mostrar as primeiras 20 de '+matched.length+' fichas correspondentes. Refine os filtros.</p>');
@@ -1294,11 +1341,13 @@
  const diasAteConsulta = c.nextAppt ? Math.round((new Date(c.nextAppt + 'T00:00:00') - hoje0) / 86400000) : null;
  const alertClass = (diasAteConsulta !== null && diasAteConsulta >= 0 && diasAteConsulta <= 7) ? 'urgent-consult' : '';
  
+ const estadoGeral = getEstadoGeralPaciente(c);
  histDiv.insertAdjacentHTML('beforeend', `
  <div class="history-item ${alertClass}">
  <div class="history-header">
  <div>
  <strong style="font-size:1.1em; color:var(--primary);">${c.idProcesso ? `[${escapeHTML(c.idProcesso)}] ` : ''}${escapeHTML(c.paciente)}</strong>
+ <span class="badge ${estadoGeral.cls}" style="margin-left:8px; vertical-align:middle;">${escapeHTML(estadoGeral.txt)}</span>
  <div style="margin-top:4px; font-size:0.85em;">Próx. Consulta: <b style="color:var(--accent)">${c.nextAppt ? formatDate(c.nextAppt) : 'Não marcada'}</b></div>
  </div>
  <div class="history-actions" style="display:flex; gap:5px;">

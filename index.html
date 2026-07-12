@@ -175,7 +175,7 @@
 <datalist id="dlAdicionais"></datalist>
 <div id="toast-container"></div>
 
-<div id="custom-modal" class="modal-overlay">
+<div id="custom-modal" class="modal-overlay" onclick="if(event.target===this)closeModal()">
  <div class="modal-box">
  <h3 id="modal-title">⚠️ Atenção</h3>
  <p id="modal-message">Tem a certeza?</p>
@@ -186,7 +186,7 @@
  </div>
 </div>
 
-<div id="encomendas-modal" class="modal-overlay">
+<div id="encomendas-modal" class="modal-overlay" onclick="if(event.target===this)this.classList.remove('show')">
  <div class="modal-box" style="max-width: 720px;">
   <h3 style="color:var(--primary);">&#128230; Peças a Encomendar (Planeamento)</h3>
   <p id="encomendas-info" style="font-size:0.85em; color:#666; margin-top:0;">Peças necessárias para os dentes/zonas em estado "Planeamento", comparadas com o stock atual.</p>
@@ -203,7 +203,7 @@
  </div>
 </div>
 
-<div id="versoes-modal" class="modal-overlay">
+<div id="versoes-modal" class="modal-overlay" onclick="if(event.target===this)this.classList.remove('show')">
  <div class="modal-box" style="max-width: 520px;">
   <h3 style="color:var(--primary);">&#128336; Versões Anteriores (Google Drive)</h3>
   <p style="font-size:0.85em; color:#666; margin-top:0;">Cópias diárias guardadas automaticamente (até 90 dias). Restaurar substitui os dados atuais.</p>
@@ -351,7 +351,7 @@
  <div>
  <div class="card">
  <h2>Inventário de Peças</h2>
- <input type="text" id="searchStock" placeholder="Filtrar por referência ou descrição..." onkeyup="filterStockTable()" style="margin-bottom: 10px; width:100%; padding:8px; border:1px solid #ccc; border-radius:4px;">
+ <input type="text" id="searchStock" placeholder="Filtrar por referência ou descrição..." oninput="clearTimeout(window._fsDebounce);window._fsDebounce=setTimeout(filterStockTable,200)" style="margin-bottom: 10px; width:100%; padding:8px; border:1px solid #ccc; border-radius:4px;">
  <div class="table-wrapper">
  <table>
  <thead><tr><th>Referência</th><th>Descrição</th><th>Qtd</th><th>Estado</th></tr></thead>
@@ -420,6 +420,7 @@
  let hasUnsavedChanges = false;
  let pecasBloqueadas = false;
  let modalCallback = null;
+ let modalQueue = [];
 
  // Aviso de fecho acidental com dados por gravar
  window.addEventListener('beforeunload', (e) => {
@@ -816,6 +817,7 @@
  }
 
  function showConfirm(message, onConfirm, title="⚠️ Atenção", infoOnly=false) {
+ if (modalCallback) { modalQueue.push({message, onConfirm, title, infoOnly}); return; }
  document.getElementById('modal-title').innerText = title;
  document.getElementById('modal-message').innerText = message;
  const btnConfirm = document.getElementById('modal-confirm-btn');
@@ -824,7 +826,9 @@
  btnConfirm.innerText = infoOnly ? 'Fechar' : 'Confirmar Ação';
  modalCallback = onConfirm; document.getElementById('custom-modal').classList.add('show');
  }
- function closeModal() { document.getElementById('custom-modal').classList.remove('show'); modalCallback = null; }
+ function closeModal() { document.getElementById('custom-modal').classList.remove('show'); modalCallback = null;
+ if (modalQueue.length) { const next = modalQueue.shift(); showConfirm(next.message, next.onConfirm, next.title, next.infoOnly); }
+ }
 
  function populateDatalist() {
   var dlAll = document.getElementById('catalogoList');
@@ -851,7 +855,12 @@
  }
 
  // --- MECÂNICA RESTAURADA: FASES POR DENTE ---
+ let _faseRenderTimer = null;
  function renderFaseContainers() {
+ if (_faseRenderTimer) return;
+ _faseRenderTimer = requestAnimationFrame(() => { _faseRenderTimer = null; _renderFaseContainersInner(); });
+ }
+ function _renderFaseContainersInner() {
  const rows = document.querySelectorAll('.dente-row');
  ['cir', 'reab', 'prost'].forEach(faseKey => {
  const container = document.getElementById('faseContainer_' + faseKey);
@@ -1411,6 +1420,7 @@
  // conforme o estado da variável global pecasBloqueadas.
  function applyPecasLockState() {
  document.querySelectorAll('.dente-implante, .dente-pilar, .dente-outro-input').forEach(el => el.disabled = pecasBloqueadas);
+ document.querySelectorAll('.dente-id').forEach(el => el.disabled = pecasBloqueadas);
  document.querySelectorAll('.peca-fields').forEach(el => el.classList.toggle('locked', pecasBloqueadas));
  document.querySelectorAll('.dente-row').forEach(row => renderOutrosChips(row));
  const lbl = document.getElementById('pecasLockLabel');
@@ -1542,10 +1552,24 @@
  let _mb = 0;
     try { for (let _k in localStorage) { _mb += (localStorage.getItem(_k).length + _k.length) * 2; } } catch(e) {}
     const memUsada = (_mb / 1024 / 1024).toFixed(2);
-    const percLivre = Math.max(0, 100 - (parseFloat(memUsada) / 10 * 100)).toFixed(0);
- const memEl = document.getElementById('dashMemoria');
- memEl.innerText = `${percLivre}%`;
- if(percLivre < 20) { memEl.style.color = "var(--accent)"; showToast("Memória do browser quase cheia. Exporte dados.", "error"); }
+    const memEl = document.getElementById('dashMemoria');
+    if (navigator.storage && navigator.storage.estimate) {
+     navigator.storage.estimate().then(est => {
+      const usedMB = (est.usage / 1024 / 1024).toFixed(2);
+      const totalMB = est.quota / 1024 / 1024;
+      const percLivre = Math.max(0, (1 - est.usage / est.quota) * 100).toFixed(0);
+      memEl.innerText = `${percLivre}% (${usedMB}/${totalMB.toFixed(0)} MB)`;
+      if(percLivre < 20) { memEl.style.color = "var(--accent)"; showToast("Memória do browser quase cheia. Exporte dados.", "error"); }
+     }).catch(() => {
+      const percLivre = Math.max(0, 100 - (parseFloat(memUsada) / 10 * 100)).toFixed(0);
+      memEl.innerText = `${percLivre}%`;
+      if(percLivre < 20) { memEl.style.color = "var(--accent)"; showToast("Memória do browser quase cheia. Exporte dados.", "error"); }
+     });
+    } else {
+     const percLivre = Math.max(0, 100 - (parseFloat(memUsada) / 10 * 100)).toFixed(0);
+     memEl.innerText = `${percLivre}%`;
+     if(percLivre < 20) { memEl.style.color = "var(--accent)"; showToast("Memória do browser quase cheia. Exporte dados.", "error"); }
+    }
  }
 
  // --- GERAÇÃO DE PDF E IMPRESSÃO (Agora processa as Fases) ---
@@ -1722,7 +1746,7 @@
  // Nota: usa-se .txt em vez de .json porque o Web Share API do Chromium/Android
  // só permite partilhar ficheiros com extensões numa lista fixa (imagens, áudio, vídeo, texto),
  // e .json não está incluído. O conteúdo continua a ser JSON válido, só muda a extensão.
- const fileName = `backup_galimplant_zeferino_${dFormat}.txt`;
+  const fileName = `backup_galimplant_${dFormat}.txt`;
  const file = new File([jsonStr], fileName, { type: "text/plain" });
 
  // O picker de partilha nativo do Windows tem um bug conhecido que falha a
@@ -2149,6 +2173,13 @@
  const token = await ensureGDriveToken();
  const remote = await gdriveFindFile(token);
  if (!remote) { showToast('Ainda não existe nenhum backup no Google Drive.', 'warning'); return; }
+ // Rede de segurança silenciosa: guarda os dados locais atuais antes de serem
+ // substituídos pelos que vêm da nuvem, sem interromper o utilizador com uma
+ // folha de partilha/download (que o exportBackup() dispararia a cada sincronização).
+ try {
+ localStorage.setItem('galimplant_pre_pull_backup', JSON.stringify(buildBackupObject()));
+ localStorage.setItem('galimplant_pre_pull_backup_time', new Date().toISOString());
+ } catch (e) { /* melhor esforço — não bloqueia o pull */ }
  let text = await gdriveDownload(token, remote.id);
  if (gdriveIsEncryptedPayload(text)) {
  if (!gdrivePassphrase && !promptGDrivePassphrase()) return;

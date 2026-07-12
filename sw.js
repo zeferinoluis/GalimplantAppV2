@@ -1,6 +1,5 @@
-const CACHE_NAME = "galimplant-cache-v39";
+const CACHE_NAME = "galimplant-cache-v41";
 const ASSETS = [
-  "./",
   "./index.html",
   "./recovery.html",
   "./manifest.json",
@@ -14,7 +13,9 @@ const ASSETS = [
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS))
+    caches.open(CACHE_NAME).then((cache) =>
+      Promise.allSettled(ASSETS.map((url) => cache.add(url).catch(() => null)))
+    )
   );
   self.skipWaiting();
 });
@@ -34,9 +35,6 @@ self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   if (!event.request.url.startsWith("http")) return;
 
-  // Navegações (abrir a app / raiz do site): rede primeiro, com fallback
-  // offline para o index.html em cache. Garante que abrir "https://.../"
-  // offline funciona, mesmo não havendo entrada de cache para a raiz.
   if (event.request.mode === "navigate") {
     event.respondWith(
       fetch(event.request)
@@ -48,6 +46,24 @@ self.addEventListener("fetch", (event) => {
         .catch(() =>
           caches.match(event.request).then((c) => c || caches.match("./index.html"))
         )
+    );
+    return;
+  }
+
+  if (event.request.destination === "document") {
+    event.respondWith(
+      caches.match(event.request).then((cached) => {
+        const fetchPromise = fetch(event.request)
+          .then((response) => {
+            if (response && response.status === 200 && response.type === "basic") {
+              const clone = response.clone();
+              caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+            }
+            return response;
+          })
+          .catch(() => cached);
+        return cached || fetchPromise;
+      })
     );
     return;
   }

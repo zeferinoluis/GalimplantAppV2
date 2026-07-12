@@ -790,12 +790,15 @@
  const savedSurgeries = localStorage.getItem('galimplant_surgeries_v3');
  if (savedSurgeries) { SurgeriesLog = JSON.parse(savedSurgeries); }
 
+ verifyDataIntegrity();
+
  renderStockTable();
  renderCatalogManager();
  filterHistoryAndRender();
  addDenteRow(); // Instancia o primeiro dente e desenha as fases automaticamente
  updateDashboard();
  checkBackupStatus();
+ hasUnsavedChanges = false; // addDenteRow() marca a flag como true; no arranque não há nada por guardar
  document.getElementById('modal-confirm-btn').addEventListener('click', function() { if (modalCallback) modalCallback(); closeModal(); });
  });
 
@@ -816,6 +819,32 @@
   });
  }
 
+ // Verificação de integridade no arranque — apenas corrige stock negativo (que nunca é válido)
+ // e AVISA sobre referências em fichas antigas que já não existem no catálogo atual.
+ // Não apaga nem altera fichas clínicas: a intenção é detetar, nunca reescrever histórico.
+ function verifyDataIntegrity() {
+ let stockCorrigido = 0;
+ Object.keys(CurrentStock).forEach(ref => {
+ if (CurrentStock[ref] < 0) { CurrentStock[ref] = 0; stockCorrigido++; }
+ });
+ if (stockCorrigido > 0) {
+ localStorage.setItem('galimplant_stock_v3', JSON.stringify(CurrentStock));
+ console.warn(`[Integridade] ${stockCorrigido} referência(s) com stock negativo foram corrigidas para 0.`);
+ }
+
+ const refsOrfas = new Set();
+ (SurgeriesLog || []).forEach(c => {
+ (c.dentesTratados || []).forEach(d => {
+ [d.implante, d.pilar].concat(getOutrosArray(d)).filter(Boolean).forEach(p => {
+ if (Catalogo[p] === undefined) refsOrfas.add(p);
+ });
+ });
+ });
+ if (refsOrfas.size > 0) {
+ console.warn('[Integridade] Fichas com referências que já não existem no catálogo atual:', Array.from(refsOrfas));
+ }
+ }
+
  function showConfirm(message, onConfirm, title="⚠️ Atenção", infoOnly=false) {
  if (modalCallback) { modalQueue.push({message, onConfirm, title, infoOnly}); return; }
  document.getElementById('modal-title').innerText = title;
@@ -824,7 +853,8 @@
  const btnCancel = btnConfirm.previousElementSibling;
  btnCancel.style.display = infoOnly ? 'none' : '';
  btnConfirm.innerText = infoOnly ? 'Fechar' : 'Confirmar Ação';
- modalCallback = onConfirm; document.getElementById('custom-modal').classList.add('show');
+ // Em diálogos apenas informativos, "Fechar" nunca deve disparar a ação associada
+ modalCallback = infoOnly ? null : onConfirm; document.getElementById('custom-modal').classList.add('show');
  }
  function closeModal() { document.getElementById('custom-modal').classList.remove('show'); modalCallback = null;
  if (modalQueue.length) { const next = modalQueue.shift(); showConfirm(next.message, next.onConfirm, next.title, next.infoOnly); }
@@ -1154,16 +1184,23 @@
  }
  }
 
- // Calcula, por multiconjunto, o que sai (devolve ao stock) e o que entra (abate do stock)
+ // Reconciliação por multiconjunto GLOBAL (não por índice de linha): assim, remover uma
+ // linha de dente durante a edição continua a devolver corretamente as peças dela ao stock,
+ // em vez de a iteração terminar antes de a processar.
+ const pecasOriginaisTotal = {};
+ originais.forEach((d, i) => { pecasOriginais(i).forEach(p => { pecasOriginaisTotal[p] = (pecasOriginaisTotal[p] || 0) + 1; }); });
+ const pecasNovasTotal = {};
+ listaDentes.forEach(d => { pecasNovas(d).forEach(p => { pecasNovasTotal[p] = (pecasNovasTotal[p] || 0) + 1; }); });
+
  const devolver = {}, abater = {};
- for (let i = 0; i < listaDentes.length; i++) {
- const antigas = pecasOriginais(i).slice(); const novas = pecasNovas(listaDentes[i]).slice();
- antigas.forEach(p => {
- const idx = novas.indexOf(p);
- if (idx !== -1) { novas.splice(idx, 1); } else { devolver[p] = (devolver[p] || 0) + 1; }
+ Object.keys(pecasOriginaisTotal).forEach(p => {
+ const diff = pecasOriginaisTotal[p] - (pecasNovasTotal[p] || 0);
+ if (diff > 0) devolver[p] = diff;
  });
- novas.forEach(p => { abater[p] = (abater[p] || 0) + 1; });
- }
+ Object.keys(pecasNovasTotal).forEach(p => {
+ const diff = pecasNovasTotal[p] - (pecasOriginaisTotal[p] || 0);
+ if (diff > 0) abater[p] = diff;
+ });
 
  // Simula para garantir que não fica stock negativo
  const stockSimulado = Object.assign({}, CurrentStock);
@@ -1678,7 +1715,16 @@
  <h4 style="margin-top:20px; border-bottom:1px solid #ccc;">Trabalho Clínico e Peças Utilizadas</h4>
  <table style="width:100%; border-collapse: collapse; margin-bottom:20px; font-size:14px;">
  <tr style="background:#f4f4f4;"><th style="border:1px solid #ccc; padding:8px;">Dente</th><th style="border:1px solid #ccc; padding:8px;">Implante</th><th style="border:1px solid #ccc; padding:8px;">Pilar/Outro</th><th style="border:1px solid #ccc; padding:8px;">Torque</th><th style="border:1px solid #ccc; padding:8px;">Estado</th></tr>
-          ${(c.dentesTratados||[]).map(function(d){return '<tr><td style="border:1px solid #ccc;padding:8px;">'+(d.dente||'-')+'</td><td style="border:1px solid #ccc;padding:8px;">'+(d.implante||'-')+'</td><td style="border:1px solid #ccc;padding:8px;">'+(d.pilar||'-')+(getOutrosArray(d).length?' | '+getOutrosArray(d).join(' + '):'')+'</td><td style="border:1px solid #ccc;padding:8px;">'+(d.torque?d.torque+' Ncm':'-')+'</td><td style="border:1px solid #ccc;padding:8px;">'+(d.estado||'-')+'</td></tr>';}).join('') || '<tr><td colspan="5" style="text-align:center;color:#999;padding:8px;">Sem peças registadas</td></tr>'}
+          ${(c.dentesTratados||[]).map(function(d){
+            const denteNome = escapeHTML(d.dente || '-');
+            const implanteRef = escapeHTML(d.implante || '-');
+            const pilarRef = escapeHTML(d.pilar || '-');
+            const outrosArr = getOutrosArray(d).map(escapeHTML);
+            const pecasOutras = outrosArr.length ? ' | ' + outrosArr.join(' + ') : '';
+            const torqueVal = d.torque ? escapeHTML(d.torque) + ' Ncm' : '-';
+            const estadoVal = escapeHTML(d.estado || '-');
+            return '<tr><td style="border:1px solid #ccc;padding:8px;">'+denteNome+'</td><td style="border:1px solid #ccc;padding:8px;">'+implanteRef+'</td><td style="border:1px solid #ccc;padding:8px;">'+pilarRef+pecasOutras+'</td><td style="border:1px solid #ccc;padding:8px;">'+torqueVal+'</td><td style="border:1px solid #ccc;padding:8px;">'+estadoVal+'</td></tr>';
+          }).join('') || '<tr><td colspan="5" style="text-align:center;color:#999;padding:8px;">Sem peças registadas</td></tr>'}
  </table>
  
  <h4 style="margin-top:20px; border-bottom:1px solid #ccc;">Cronograma e Notas de Evolução</h4>
@@ -1841,7 +1887,7 @@
  }
  localStorage.setItem('galimplant_stock_v3', JSON.stringify(CurrentStock));
  localStorage.setItem('galimplant_surgeries_v3', JSON.stringify(SurgeriesLog));
- populateDatalist(); renderStockTable(); renderCatalogManager(); filterHistoryAndRender(); updateDashboard();
+ populateDatalist(); renderStockTable(); renderCatalogManager(); filterHistoryAndRender(); updateDashboard(); checkBackupStatus();
  }
 
  function importBackup(event) {
@@ -1982,24 +2028,41 @@
  }
 
  // --- Encriptação opcional (AES-GCM, chave derivada da palavra-passe por PBKDF2) ---
+ // Conversores Base64 seguros: evitam "RangeError: Maximum call stack size exceeded"
+ // que o spread operator (...) provoca em Uint8Array grandes (histórico com muitas fichas).
+ function uint8ArrayToBase64(bytes) {
+ let binary = '';
+ const chunkSize = 0x8000; // processa em blocos para não sobrecarregar a pilha nem a memória
+ for (let i = 0; i < bytes.length; i += chunkSize) {
+ binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+ }
+ return btoa(binary);
+ }
+ function base64ToUint8Array(b64) {
+ const binary = atob(b64);
+ const bytes = new Uint8Array(binary.length);
+ for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+ return bytes;
+ }
+
  async function deriveGDriveKey(passphrase, saltB64) {
  const enc = new TextEncoder();
- const salt = saltB64 ? Uint8Array.from(atob(saltB64), c => c.charCodeAt(0)) : crypto.getRandomValues(new Uint8Array(16));
+ const salt = saltB64 ? base64ToUint8Array(saltB64) : crypto.getRandomValues(new Uint8Array(16));
  const baseKey = await crypto.subtle.importKey('raw', enc.encode(passphrase), 'PBKDF2', false, ['deriveKey']);
  const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: 150000, hash: 'SHA-256' }, baseKey, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
- return { key, saltB64: btoa(String.fromCharCode(...salt)) };
+ return { key, saltB64: uint8ArrayToBase64(salt) };
  }
  async function gdriveEncryptText(plainText, passphrase) {
  const { key, saltB64 } = await deriveGDriveKey(passphrase, null);
  const iv = crypto.getRandomValues(new Uint8Array(12));
  const cipherBuf = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plainText));
- return JSON.stringify({ encrypted: true, v: 1, salt: saltB64, iv: btoa(String.fromCharCode(...iv)), data: btoa(String.fromCharCode(...new Uint8Array(cipherBuf))) });
+ return JSON.stringify({ encrypted: true, v: 1, salt: saltB64, iv: uint8ArrayToBase64(iv), data: uint8ArrayToBase64(new Uint8Array(cipherBuf)) });
  }
  async function gdriveDecryptText(payloadStr, passphrase) {
  const payload = JSON.parse(payloadStr);
  const { key } = await deriveGDriveKey(passphrase, payload.salt);
- const iv = Uint8Array.from(atob(payload.iv), c => c.charCodeAt(0));
- const data = Uint8Array.from(atob(payload.data), c => c.charCodeAt(0));
+ const iv = base64ToUint8Array(payload.iv);
+ const data = base64ToUint8Array(payload.data);
  const plainBuf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, data);
  return new TextDecoder().decode(plainBuf);
  }
@@ -2043,7 +2106,7 @@
  }
 
  async function gdrivePush(silent) {
- if (!gdriveConnected) { showToast('Ligue primeiro ao Google Drive.', 'error'); return; }
+ if (!gdriveConnected) { showToast('Ligue primeiro ao Google Drive.', 'error'); return false; }
  try {
  const token = await ensureGDriveToken();
  const remote = await gdriveFindFile(token);
@@ -2051,12 +2114,13 @@
  if (remote && lastSync && remote.modifiedTime > lastSync) {
  updateGDriveStatusUI('⚠️ Conflito — veja o aviso.');
  showConfirm('Existe uma versão mais recente na nuvem (provavelmente de outro dispositivo) que ainda não foi transferida para aqui. Se continuar, essa versão será SUBSTITUÍDA pelos dados deste dispositivo.\n\nRecomendado: cancele e use "Transferir da nuvem" primeiro.', () => gdrivePushForce(token, remote.id, silent), '⚠️ Conflito de Sincronização');
- return;
+ return true; // à espera de decisão do utilizador — não é uma falha de rede, não repetir automaticamente
  }
- await gdrivePushForce(token, remote ? remote.id : null, silent);
+ return await gdrivePushForce(token, remote ? remote.id : null, silent);
  } catch (e) {
  updateGDriveStatusUI('Erro ao sincronizar.');
  if (!silent) showToast('Falha ao enviar para o Google Drive.', 'error');
+ return false;
  }
  }
 
@@ -2064,7 +2128,7 @@
  try {
  let payload = JSON.stringify(buildBackupObject());
  if (gdriveEncryptEnabled()) {
- if (!gdrivePassphrase && !promptGDrivePassphrase()) return;
+ if (!gdrivePassphrase && !promptGDrivePassphrase()) return false;
  payload = await gdriveEncryptText(payload, gdrivePassphrase);
  }
  const result = await gdriveUpload(token, fileId, payload);
@@ -2074,10 +2138,26 @@
  updateGDriveStatusUI('✓ Sincronizado às ' + new Date().toLocaleTimeString('pt-PT'));
  if (!silent) showToast('Dados enviados para o Google Drive.');
  gdriveMaybePinDailySnapshot(token, result.id); // não bloqueia a UI; falhas aqui não são críticas
+ return true;
  } catch (e) {
  updateGDriveStatusUI('Erro ao enviar.');
  if (!silent) showToast('Falha ao enviar para o Google Drive.', 'error');
+ return false;
  }
+ }
+
+ // Repetição com espera crescente (4s → 8s → 16s) para o auto-sync silencioso,
+ // que corre em segundo plano e por isso beneficia de tentar recuperar sozinho
+ // de falhas de rede momentâneas, sem incomodar o utilizador.
+ async function gdrivePushWithRetry(maxRetries = 3, baseDelay = 4000) {
+ for (let attempt = 0; attempt <= maxRetries; attempt++) {
+ const ok = await gdrivePush(true);
+ if (ok) return true;
+ if (attempt === maxRetries) return false;
+ const delay = Math.min(baseDelay * Math.pow(2, attempt), 30000);
+ await new Promise((resolve) => setTimeout(resolve, delay));
+ }
+ return false;
  }
 
  // --- Histórico de versões (tipo "Time Machine"), usando as revisões nativas do Drive ---
@@ -2204,7 +2284,7 @@
  function scheduleGDriveAutoSync() {
  if (!gdriveConnected || !gdriveAutoSyncEnabled()) return;
  clearTimeout(gdriveAutoSyncTimer);
- gdriveAutoSyncTimer = setTimeout(() => gdrivePush(true), 4000);
+ gdriveAutoSyncTimer = setTimeout(() => gdrivePushWithRetry(), 4000);
  }
 
  window.addEventListener('load', () => {

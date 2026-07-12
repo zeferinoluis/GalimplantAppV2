@@ -90,6 +90,7 @@ function setStatus(msg) { document.getElementById('status').innerText = msg; }
 function connect() {
  const clientId = document.getElementById('clientId').value.trim();
  if (!clientId) { alert('Indique o Client ID OAuth.'); return; }
+ localStorage.setItem('galimplant_gdrive_clientid', clientId); // Persiste para a próxima vez que abrir esta página
  if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
  alert('A biblioteca do Google ainda não carregou. Verifique a ligação à internet e tente novamente.');
  return;

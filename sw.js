@@ -1,4 +1,4 @@
-const CACHE_NAME = "galimplant-cache-v41";
+const CACHE_NAME = "galimplant-cache-v42";
 const ASSETS = [
   "./index.html",
   "./recovery.html",
@@ -14,7 +14,14 @@ const ASSETS = [
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) =>
-      Promise.allSettled(ASSETS.map((url) => cache.add(url).catch(() => null)))
+      Promise.allSettled(
+        ASSETS.map((url) =>
+          cache.add(url).catch((err) => {
+            console.warn("[SW] Falha ao pré-cachear:", url, err);
+            return null;
+          })
+        )
+      )
     )
   );
   self.skipWaiting();
@@ -36,6 +43,11 @@ self.addEventListener("fetch", (event) => {
   if (!event.request.url.startsWith("http")) return;
 
   if (event.request.mode === "navigate") {
+    // O fallback offline deve corresponder à página pedida: se for recovery.html
+    // que falha, cair para recovery.html (não para index.html, que era o bug anterior).
+    const fallbackUrl = event.request.url.includes("recovery.html")
+      ? "./recovery.html"
+      : "./index.html";
     event.respondWith(
       fetch(event.request)
         .then((response) => {
@@ -44,30 +56,13 @@ self.addEventListener("fetch", (event) => {
           return response;
         })
         .catch(() =>
-          caches.match(event.request).then((c) => c || caches.match("./index.html"))
+          caches.match(event.request).then((c) => c || caches.match(fallbackUrl))
         )
     );
     return;
   }
 
-  if (event.request.destination === "document") {
-    event.respondWith(
-      caches.match(event.request).then((cached) => {
-        const fetchPromise = fetch(event.request)
-          .then((response) => {
-            if (response && response.status === 200 && response.type === "basic") {
-              const clone = response.clone();
-              caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-            }
-            return response;
-          })
-          .catch(() => cached);
-        return cached || fetchPromise;
-      })
-    );
-    return;
-  }
-
+  // Restantes pedidos GET (assets, scripts, etc.): cache-first com atualização em segundo plano.
   event.respondWith(
     caches.match(event.request).then((cached) => {
       const fetchPromise = fetch(event.request)

@@ -1093,9 +1093,22 @@
  if(d.implante) pecas.push(d.implante); if(d.pilar) pecas.push(d.pilar); pecas = pecas.concat(d.outros || []);
  for(let p of pecas) { 
  if(!Catalogo[p]) { showToast(`Peça "${p}" não existe no catálogo. Grave no catálogo primeiro.`, "error"); return;}
- // Em Planeamento, a peça só será necessária se a cirurgia for aprovada — não exige stock nem o abate agora.
- if(d.estado !== 'Planeamento' && (CurrentStock[p] || 0) <= 0) { showToast(`Stock zero para: ${p}. Impossível abater.`, "error"); return; } 
  }
+ }
+ // Soma a necessidade TOTAL de cada referência em todos os dentes/zonas desta ficha
+ // (duas zonas podem partilhar a mesma referência, ex: mesmo implante em 1.5 e 1.6)
+ // e valida contra o stock atual ANTES de abater seja o que for. Evita que o stock
+ // fique negativo sem aviso quando a mesma peça é necessária mais do que uma vez.
+ const necessario = {};
+ listaDentes.forEach(d => {
+ if (d.estado === 'Planeamento') return; // Sem abate de stock enquanto estiver em Planeamento
+ let pecas = [];
+ if(d.implante) pecas.push(d.implante); if(d.pilar) pecas.push(d.pilar); pecas = pecas.concat(d.outros || []);
+ pecas.forEach(p => { necessario[p] = (necessario[p] || 0) + 1; });
+ });
+ for (const p of Object.keys(necessario)) {
+ const disponivel = CurrentStock[p] || 0;
+ if (disponivel < necessario[p]) { showToast(`Stock insuficiente para: ${p} (necessário ${necessario[p]}, disponível ${disponivel}). Atualize o inventário antes de gravar.`, "error"); return; }
  }
  let avisos = [];
  listaDentes.forEach(d => {

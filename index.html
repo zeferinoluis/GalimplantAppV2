@@ -165,6 +165,9 @@
  .ac-chip { background: #e8f0fa; border: 1px solid #b0c4d8; color: var(--primary); border-radius: 14px; padding: 4px 6px 4px 10px; font-size: 12px; display: inline-flex; align-items: center; gap: 4px; }
  .ac-chip-x { background: none; border: none; color: var(--accent); font-weight: bold; cursor: pointer; padding: 0 4px; font-size: 12px; line-height: 1; }
  .peca-fields.locked { pointer-events: none; opacity: .7; background: #e9ecef; border-radius: 6px; }
+ .campo-incompativel { border: 2px solid #e74c3c !important; background: #fff5f5 !important; }
+ .aviso-compat { color: #c0392b; font-size: 12px; font-weight: 600; margin-top: 4px; display: none; }
+ .aviso-compat.show { display: block; }
  </style>
 </head>
 <body>
@@ -1028,8 +1031,8 @@
  </div>
  </div>
  <div class="form-row-three peca-fields">
- <div class="ac-wrapper"><label>Implante</label><input autocomplete="off" class="dente-implante" placeholder="Ex: IPX 4010S" oninput="acFilter(this,'implante')" onfocus="acFilter(this,'implante')" onchange="checkStockAlert(this.value)" onblur="acClose(this)"><div class="ac-dropdown"></div></div>
- <div class="ac-wrapper"><label>Pilar/Trans</label><input autocomplete="off" class="dente-pilar" placeholder="Ex: MUSR 04030" oninput="acFilter(this,'pilar')" onfocus="acFilter(this,'pilar')" onchange="checkStockAlert(this.value)" onblur="acClose(this)"><div class="ac-dropdown"></div></div>
+ <div class="ac-wrapper"><label>Implante</label><input autocomplete="off" class="dente-implante" placeholder="Ex: IPX 4010S" oninput="acFilter(this,'implante')" onfocus="acFilter(this,'implante')" onchange="checkStockAlert(this.value); checkCompatibilidadeRow(this)" onblur="acClose(this)"><div class="ac-dropdown"></div><div class="aviso-compat"></div></div>
+ <div class="ac-wrapper"><label>Pilar/Trans</label><input autocomplete="off" class="dente-pilar" placeholder="Ex: MUSR 04030" oninput="acFilter(this,'pilar')" onfocus="acFilter(this,'pilar')" onchange="checkStockAlert(this.value); checkCompatibilidadeRow(this)" onblur="acClose(this)"><div class="ac-dropdown"></div></div>
  <div class="ac-wrapper ac-multi"><label>Adicional (até 10 peças)</label>
  <input type="hidden" class="dente-outros-data" value="[]">
  <input autocomplete="off" class="dente-outro-input" placeholder="Escrever/escolher e Enter" oninput="acFilter(this,'adicional')" onfocus="acFilter(this,'adicional')" onkeydown="handleOutroKeydown(event,this)" onblur="acClose(this)">
@@ -1047,6 +1050,7 @@
  f.querySelector('.dente-implante').value = dados.implante || '';
  f.querySelector('.dente-pilar').value = dados.pilar || '';
  getOutrosArray(dados).forEach(v => addOutroToRow(idFila, v));
+ checkCompatibilidadeRow(f.querySelector('.dente-implante'));
  }
  renderFaseContainers();
  hasUnsavedChanges = true;
@@ -1134,6 +1138,12 @@
  // Dentes/Zonas duplicados partilhariam a mesma chave nas fases — bloquear
  const nomesDentes = listaDentes.map(d => d.dente.toUpperCase());
  if (new Set(nomesDentes).size !== nomesDentes.length) { showToast("Existem Dentes/Zonas com o mesmo nome. Use identificações distintas (ex: 16, 16-distal).", "error"); return; }
+
+ // Aviso (não bloqueante) sobre combinações Implante/Pilar incompatíveis (série M2 vs clássica)
+ const incompatibilidades = listarIncompatibilidadesForm();
+ if (incompatibilidades.length > 0) {
+  showToast(`Atenção: ${incompatibilidades.length} combinação(ões) Implante/Pilar possivelmente incompatível(eis). Verifique os campos marcados a vermelho.`, "warning");
+ }
 
  // Evitar dois processos com o mesmo Nº / ID
  const pIdVal = document.getElementById('pId').value.trim();
@@ -1380,6 +1390,63 @@
  function updateSingleStock(ref, val) { CurrentStock[ref] = parseInt(val) || 0; localStorage.setItem('galimplant_stock_v3', JSON.stringify(CurrentStock)); renderStockTable(); updateDashboard(); scheduleGDriveAutoSync(); }
  function saveStockToStorage() { Object.keys(Catalogo).forEach(ref => { const _e3=document.getElementById('input_st_'+ref.replace(/[^a-zA-Z0-9]/g,'_')); CurrentStock[ref]=_e3?(parseInt(_e3.value)||0):(CurrentStock[ref]||0); }); localStorage.setItem('galimplant_stock_v3', JSON.stringify(CurrentStock)); renderStockTable(); showToast("Stock atualizado."); updateDashboard(); scheduleGDriveAutoSync(); }
  function checkStockAlert(ref) { if(ref && (CurrentStock[ref] || 0) === 0 && Catalogo[ref]) showToast(`Sem stock para: ${ref}`, "warning"); }
+
+ // Compatibilidade Implante ↔ Pilar/Trans: os pilares "M2" (métrica Ø2.0) só encaixam em
+ // implantes M2 (ex: IPXC M2, ICIC M2); todos os outros pilares (métrica clássica Ø1.6)
+ // funcionam com qualquer implante EXCETO os M2. Deteção pela presença do token "M2" na referência.
+ var reM2 = /\bM2\b/;
+ function isRefM2(ref) { return !!ref && reM2.test(ref); }
+
+ function verificarCompatibilidadePeca(implanteRef, pilarRef) {
+  // Só avalia quando ambas as referências estão preenchidas e reconhecidas como implante/pilar
+  if (!implanteRef || !pilarRef) return { ok: true };
+  if (!reImplante.test(implanteRef) || !rePilar.test(pilarRef)) return { ok: true };
+  const implanteM2 = isRefM2(implanteRef);
+  const pilarM2 = isRefM2(pilarRef);
+  if (implanteM2 !== pilarM2) {
+   const msg = pilarM2
+    ? `O pilar "${pilarRef}" é da série M2 e só é compatível com implantes M2. O implante "${implanteRef}" não é M2.`
+    : `O implante "${implanteRef}" é da série M2 e só aceita pilares M2. O pilar "${pilarRef}" não é M2.`;
+   return { ok: false, msg };
+  }
+  return { ok: true };
+ }
+
+ // Chamado a partir do onchange dos campos Implante / Pilar de uma linha de dente/zona.
+ function checkCompatibilidadeRow(el) {
+  const row = el.closest('.dente-row'); if (!row) return;
+  const inputImplante = row.querySelector('.dente-implante');
+  const inputPilar = row.querySelector('.dente-pilar');
+  const avisoBox = row.querySelector('.aviso-compat');
+  const implanteRef = inputImplante.value.trim();
+  const pilarRef = inputPilar.value.trim();
+
+  const resultado = verificarCompatibilidadePeca(implanteRef, pilarRef);
+  if (!resultado.ok) {
+   inputImplante.classList.add('campo-incompativel');
+   inputPilar.classList.add('campo-incompativel');
+   if (avisoBox) { avisoBox.textContent = '⚠️ ' + resultado.msg; avisoBox.classList.add('show'); }
+   showToast(resultado.msg, 'warning');
+  } else {
+   inputImplante.classList.remove('campo-incompativel');
+   inputPilar.classList.remove('campo-incompativel');
+   if (avisoBox) { avisoBox.textContent = ''; avisoBox.classList.remove('show'); }
+  }
+  return resultado.ok;
+ }
+
+ // Percorre todas as linhas de dentes/zonas do formulário e devolve as incompatibilidades encontradas.
+ function listarIncompatibilidadesForm() {
+  const problemas = [];
+  document.querySelectorAll('.dente-row').forEach(row => {
+   const denteId = row.querySelector('.dente-id').value.trim() || '(sem identificação)';
+   const implanteRef = row.querySelector('.dente-implante').value.trim();
+   const pilarRef = row.querySelector('.dente-pilar').value.trim();
+   const resultado = verificarCompatibilidadePeca(implanteRef, pilarRef);
+   if (!resultado.ok) problemas.push(`Dente/Zona ${denteId}: ${resultado.msg}`);
+  });
+  return problemas;
+ }
  function filterStockTable() { const q = document.getElementById('searchStock').value.toLowerCase(); document.querySelectorAll('.item-row').forEach(r => r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none'); }
 
  function filterHistoryAndRender() {

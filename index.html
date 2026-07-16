@@ -165,6 +165,7 @@
  .ac-chip { background: #e8f0fa; border: 1px solid #b0c4d8; color: var(--primary); border-radius: 14px; padding: 4px 6px 4px 10px; font-size: 12px; display: inline-flex; align-items: center; gap: 4px; }
  .ac-chip-x { background: none; border: none; color: var(--accent); font-weight: bold; cursor: pointer; padding: 0 4px; font-size: 12px; line-height: 1; }
  .peca-fields.locked { pointer-events: none; opacity: .7; background: #e9ecef; border-radius: 6px; }
+ .ac-chip-incompativel { background: #fde8e8 !important; border-color: #e74c3c !important; color: #c0392b !important; }
  .campo-incompativel { border: 2px solid #e74c3c !important; background: #fff5f5 !important; }
  .aviso-compat { color: #c0392b; font-size: 12px; font-weight: 600; margin-top: 4px; display: none; }
  .aviso-compat.show { display: block; }
@@ -1086,7 +1087,10 @@
  arr.push(valor);
  hidden.value = JSON.stringify(arr);
  checkStockAlert(valor);
- renderOutrosChips(row);
+ const pilarRef = row.querySelector('.dente-pilar').value.trim();
+ const resAcessorio = verificarAcessorioCompativel(pilarRef, valor);
+ if (!resAcessorio.ok) showToast(resAcessorio.msg, 'warning');
+ atualizarAvisosCompatRow(row);
  hasUnsavedChanges = true;
  }
 
@@ -1096,15 +1100,21 @@
  let arr = []; try { arr = JSON.parse(hidden.value || '[]'); } catch(e) { arr = []; }
  arr.splice(idx, 1);
  hidden.value = JSON.stringify(arr);
- renderOutrosChips(row);
+ atualizarAvisosCompatRow(row);
  hasUnsavedChanges = true;
  }
 
  function renderOutrosChips(row) {
  const hidden = row.querySelector('.dente-outros-data');
  let arr = []; try { arr = JSON.parse(hidden.value || '[]'); } catch(e) { arr = []; }
+ const pilarRef = row.querySelector('.dente-pilar').value.trim();
  const cont = row.querySelector('.outros-chips');
- cont.innerHTML = arr.map((v, idx) => `<span class="ac-chip">${escapeHTML(v)}${pecasBloqueadas ? '' : ` <button type="button" class="ac-chip-x" onclick="removeOutroFromRow('${row.id}', ${idx})" title="Remover">✕</button>`}</span>`).join('');
+ cont.innerHTML = arr.map((v, idx) => {
+  const res = verificarAcessorioCompativel(pilarRef, v);
+  const cls = res.ok ? 'ac-chip' : 'ac-chip ac-chip-incompativel';
+  const title = res.ok ? '' : ` title="${escapeHTML(res.msg)}"`;
+  return `<span class="${cls}"${title}>${escapeHTML(v)}${pecasBloqueadas ? '' : ` <button type="button" class="ac-chip-x" onclick="removeOutroFromRow('${row.id}', ${idx})" title="Remover">✕</button>`}</span>`;
+ }).join('');
  }
 
  function removeDenteRow(idFila) { 
@@ -1391,59 +1401,155 @@
  function saveStockToStorage() { Object.keys(Catalogo).forEach(ref => { const _e3=document.getElementById('input_st_'+ref.replace(/[^a-zA-Z0-9]/g,'_')); CurrentStock[ref]=_e3?(parseInt(_e3.value)||0):(CurrentStock[ref]||0); }); localStorage.setItem('galimplant_stock_v3', JSON.stringify(CurrentStock)); renderStockTable(); showToast("Stock atualizado."); updateDashboard(); scheduleGDriveAutoSync(); }
  function checkStockAlert(ref) { if(ref && (CurrentStock[ref] || 0) === 0 && Catalogo[ref]) showToast(`Sem stock para: ${ref}`, "warning"); }
 
- // Compatibilidade Implante ↔ Pilar/Trans: os pilares "M2" (métrica Ø2.0) só encaixam em
- // implantes M2 (ex: IPXC M2, ICIC M2); todos os outros pilares (métrica clássica Ø1.6)
- // funcionam com qualquer implante EXCETO os M2. Deteção pela presença do token "M2" na referência.
+ /* ══════════════════════════════════════════════════════════════════════════
+    Compatibilidade Implante / Pilar / Adicionais
+    ════════════════════════════════════════════════════════════════════════
+    Nível 1 — Implante ↔ Pilar (métrica): os pilares "M2" (Ø2.0, sistema Único)
+    só encaixam em implantes M2 (IPXC M2, ICIC M2); todos os outros pilares
+    (métrica clássica Ø1.6, sistema Clássico) funcionam com qualquer implante
+    EXCETO os M2. Deteção pela presença do token "M2" na referência.
+
+    Nível 2 — Pilar ↔ Adicionais (tapas, interfases, scan bodies, réplicas,
+    parafusos de impressão específicos): cada família de pilar multi-posição
+    (estreito/slim múltiplo 3,8mm; estreito/slim unitário 3,8mm; ancho múltiplo
+    4,8mm — comum ao Clássico ancho e ao Único M2 múltiplo; ancho unitário
+    4,8mm — exclusivo do Único M2; transformável a externa M2 3,8mm; recto/
+    angulado não-estético) usa componentes próprios que não são intermutáveis
+    entre famílias, mesmo que a diferença não apareça no nome da referência
+    (ex: EPCTA 5044 é exclusiva do pilar unitário M2, EPCTA 4844 do clássico).
+    ══════════════════════════════════════════════════════════════════════════ */
  var reM2 = /\bM2\b/;
  function isRefM2(ref) { return !!ref && reM2.test(ref); }
 
- function verificarCompatibilidadePeca(implanteRef, pilarRef) {
-  // Só avalia quando ambas as referências estão preenchidas e reconhecidas como implante/pilar
+ var PILAR_GROUP_RULES = [
+  { re: /^MUSTE M2 /, g: 'E' },
+  { re: /^MUSR M2 /,  g: 'C' },
+  { re: /^MUSA M2 /,  g: 'D' },
+  { re: /^MUSR 05/,   g: 'C' },
+  { re: /^MUSR 04/,   g: 'A' },
+  { re: /^MUSLAR /,   g: 'A' },
+  { re: /^MUSA S/,    g: 'B' },
+  { re: /^MUSLA /,    g: 'B' },
+  { re: /^MUST /,     g: 'F' },
+  { re: /^EMU /,      g: 'F' }
+ ];
+ var GROUP_LABELS = {
+  A: 'Multi-posição Estético Estreito/Slim Múltiplo (Ø3,8mm · Clássico)',
+  B: 'Multi-posição Estético Estreito/Slim Unitário (Ø3,8mm · Clássico)',
+  C: 'Multi-posição Estético Ancho Múltiplo (Ø4,8mm · Clássico/Único)',
+  D: 'Multi-posição Estético Ancho Unitário (Ø4,8mm · Único M2)',
+  E: 'Multi-posição Transformável a Externa (Ø3,8mm · Único M2)',
+  F: 'Multi-posição Recto/Angulado não-estético (Clássico)'
+ };
+ // Referência de acessório → grupo(s) de pilar com que é compatível.
+ // Peças ausentes deste mapa (parafusos/réplicas universais como TMU 4048,
+ // TAIP 135/200, TRD, TPIA DP4048, dados, chaves) não são restringidas.
+ var ACCESSORY_GROUPS = {
+  'EPCTR 4030': ['A'], 'EPCTR 4844': ['A'], 'AIPTR 40': ['A'], 'ESBT MUSR': ['A'],
+  'PCERCMUR 40': ['A'], 'PITEMUR DA4075': ['A'], 'PITEMUR DA4040': ['A'], 'RITR SB 40': ['A'],
+
+  'EPCTA 4844': ['B'], 'AIPT 40': ['B'], 'SBT MUSA': ['B'],
+  'PCERCMUA 40': ['B'], 'PITEMUA DA4075': ['B'], 'PITEMUA DA4040': ['B'], 'RIT SB 40': ['B'],
+
+  'EPCTR 5044': ['C'], 'AIPTR 50': ['C'], 'SBT MUSR 50': ['C'],
+  'PITEMUR DA5075': ['C'], 'PITEMUR DA5040': ['C'], 'RITR SB 50': ['C'],
+
+  'EPCTA 5044': ['D'], 'AIPT 50': ['D'], 'SBT MUSA 50': ['D'],
+  'PITEMUA DA5075': ['D'], 'PITEMUA DA5040': ['D'], 'RIT SB 50': ['D'],
+
+  'EPCTER 4844': ['E'], 'EPCTEA 4844': ['E'], 'AIP 40T': ['E'], 'SBT 40': ['E'],
+  'PITEMUR DAE4075': ['E'], 'PITEMUA DAE5040': ['E'], 'RI SB 40E': ['E'],
+
+  'PCM 4830': ['F'], 'AIPMU 40': ['F'], 'SBT MUST': ['F'], 'TMUT 40': ['F'],
+  'PITEMUTR DA4040': ['F'], 'PITEMUTR DA4075': ['F'], 'RIMA SB 40': ['F']
+ };
+
+ function getPilarGroup(ref) {
+  if (!ref) return null;
+  for (var i = 0; i < PILAR_GROUP_RULES.length; i++) { if (PILAR_GROUP_RULES[i].re.test(ref)) return PILAR_GROUP_RULES[i].g; }
+  return null;
+ }
+
+ // Nível 1: Implante ↔ Pilar
+ function verificarCompatibilidadeImplantePilar(implanteRef, pilarRef) {
   if (!implanteRef || !pilarRef) return { ok: true };
   if (!reImplante.test(implanteRef) || !rePilar.test(pilarRef)) return { ok: true };
   const implanteM2 = isRefM2(implanteRef);
   const pilarM2 = isRefM2(pilarRef);
   if (implanteM2 !== pilarM2) {
    const msg = pilarM2
-    ? `O pilar "${pilarRef}" é da série M2 e só é compatível com implantes M2. O implante "${implanteRef}" não é M2.`
-    : `O implante "${implanteRef}" é da série M2 e só aceita pilares M2. O pilar "${pilarRef}" não é M2.`;
+    ? `O pilar "${pilarRef}" é da série M2 (Único) e só é compatível com implantes M2. O implante "${implanteRef}" não é M2.`
+    : `O implante "${implanteRef}" é da série M2 (Único) e só aceita pilares M2. O pilar "${pilarRef}" não é M2.`;
    return { ok: false, msg };
   }
   return { ok: true };
  }
 
- // Chamado a partir do onchange dos campos Implante / Pilar de uma linha de dente/zona.
- function checkCompatibilidadeRow(el) {
-  const row = el.closest('.dente-row'); if (!row) return;
+ // Nível 2: Pilar ↔ peça Adicional (tapa, interfase, scan body, réplica, parafuso específico)
+ function verificarAcessorioCompativel(pilarRef, acessorioRef) {
+  const gruposAcessorio = ACCESSORY_GROUPS[acessorioRef];
+  if (!gruposAcessorio) return { ok: true }; // peça universal ou não classificada — não restringe
+  const grupoPilar = getPilarGroup(pilarRef);
+  if (!grupoPilar) return { ok: true }; // sem pilar selecionado, ou pilar fora dos grupos conhecidos — não restringe
+  if (gruposAcessorio.indexOf(grupoPilar) === -1) {
+   return {
+    ok: false,
+    msg: `A peça "${acessorioRef}" (${GROUP_LABELS[gruposAcessorio[0]]}) não é compatível com o pilar selecionado "${pilarRef}" (${GROUP_LABELS[grupoPilar]}).`
+   };
+  }
+  return { ok: true };
+ }
+
+ // Recalcula e aplica todos os avisos visuais (campos e chips) de uma linha de dente/zona.
+ function atualizarAvisosCompatRow(row) {
+  if (!row) return true;
   const inputImplante = row.querySelector('.dente-implante');
   const inputPilar = row.querySelector('.dente-pilar');
   const avisoBox = row.querySelector('.aviso-compat');
   const implanteRef = inputImplante.value.trim();
   const pilarRef = inputPilar.value.trim();
 
-  const resultado = verificarCompatibilidadePeca(implanteRef, pilarRef);
-  if (!resultado.ok) {
-   inputImplante.classList.add('campo-incompativel');
-   inputPilar.classList.add('campo-incompativel');
-   if (avisoBox) { avisoBox.textContent = '⚠️ ' + resultado.msg; avisoBox.classList.add('show'); }
-   showToast(resultado.msg, 'warning');
-  } else {
-   inputImplante.classList.remove('campo-incompativel');
-   inputPilar.classList.remove('campo-incompativel');
-   if (avisoBox) { avisoBox.textContent = ''; avisoBox.classList.remove('show'); }
+  const mensagens = [];
+  const resImplantePilar = verificarCompatibilidadeImplantePilar(implanteRef, pilarRef);
+  if (!resImplantePilar.ok) mensagens.push(resImplantePilar.msg);
+
+  let outros = []; try { outros = JSON.parse(row.querySelector('.dente-outros-data').value || '[]'); } catch(e) { outros = []; }
+  outros.forEach(v => { const r = verificarAcessorioCompativel(pilarRef, v); if (!r.ok) mensagens.push(r.msg); });
+
+  if (!resImplantePilar.ok) { inputImplante.classList.add('campo-incompativel'); inputPilar.classList.add('campo-incompativel'); }
+  else { inputImplante.classList.remove('campo-incompativel'); inputPilar.classList.remove('campo-incompativel'); }
+
+  if (avisoBox) {
+   if (mensagens.length) { avisoBox.innerHTML = mensagens.map(m => '⚠️ ' + escapeHTML(m)).join('<br>'); avisoBox.classList.add('show'); }
+   else { avisoBox.innerHTML = ''; avisoBox.classList.remove('show'); }
   }
-  return resultado.ok;
+  renderOutrosChips(row); // realça chips de adicionais incompatíveis com o pilar atual
+  return mensagens.length === 0;
  }
 
- // Percorre todas as linhas de dentes/zonas do formulário e devolve as incompatibilidades encontradas.
+ // Chamado a partir do onchange dos campos Implante / Pilar de uma linha de dente/zona.
+ function checkCompatibilidadeRow(el) {
+  const row = el.closest ? el.closest('.dente-row') : el; if (!row) return true;
+  const ok = atualizarAvisosCompatRow(row);
+  if (!ok) {
+   const avisoBox = row.querySelector('.aviso-compat');
+   if (avisoBox && avisoBox.textContent) showToast(avisoBox.textContent.replace(/⚠️\s*/g, ''), 'warning');
+  }
+  return ok;
+ }
+
+ // Percorre todas as linhas de dentes/zonas do formulário e devolve as incompatibilidades encontradas
+ // (Implante↔Pilar e Pilar↔Adicionais), para aviso no momento de gravar a ficha.
  function listarIncompatibilidadesForm() {
   const problemas = [];
   document.querySelectorAll('.dente-row').forEach(row => {
    const denteId = row.querySelector('.dente-id').value.trim() || '(sem identificação)';
    const implanteRef = row.querySelector('.dente-implante').value.trim();
    const pilarRef = row.querySelector('.dente-pilar').value.trim();
-   const resultado = verificarCompatibilidadePeca(implanteRef, pilarRef);
-   if (!resultado.ok) problemas.push(`Dente/Zona ${denteId}: ${resultado.msg}`);
+   const resImplantePilar = verificarCompatibilidadeImplantePilar(implanteRef, pilarRef);
+   if (!resImplantePilar.ok) problemas.push(`Dente/Zona ${denteId}: ${resImplantePilar.msg}`);
+   let outros = []; try { outros = JSON.parse(row.querySelector('.dente-outros-data').value || '[]'); } catch(e) { outros = []; }
+   outros.forEach(v => { const r = verificarAcessorioCompativel(pilarRef, v); if (!r.ok) problemas.push(`Dente/Zona ${denteId}: ${r.msg}`); });
   });
   return problemas;
  }

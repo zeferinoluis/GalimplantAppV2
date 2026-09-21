@@ -169,6 +169,8 @@
  .campo-incompativel { border: 2px solid #e74c3c !important; background: #fff5f5 !important; }
  .aviso-compat { color: #c0392b; font-size: 12px; font-weight: 600; margin-top: 4px; display: none; }
  .aviso-compat.show { display: block; }
+ .aviso-stock { color: #854d0e; background-color: #fef9c3; border: 1px solid #fde047; border-radius: 4px; padding: 6px 10px; font-size: 12px; margin-top: 8px; display: none; line-height: 1.4; }
+ .aviso-stock.show { display: block; }
  </style>
 </head>
 <body>
@@ -1021,7 +1023,7 @@
  <div><label>Dente / Zona</label><input type="text" class="dente-id" value="${dados ? dados.dente : ''}" onchange="renderFaseContainers()" required></div>
  <div><label>Torque (Ncm)</label><input type="number" class="dente-torque" placeholder="Ex: 35"></div>
  <div style="grid-column: span 2;"><label>Estado Atual</label>
- <select class="dente-estado">
+ <select class="dente-estado" onchange="atualizarTodosAvisosStockForm()">
  <option value="Planeamento">Planeamento</option>
  <option value="Em osseointegração">Em osseointegração</option>
  <option value="Tampa colocada">Tampa de cicatrização colocada</option>
@@ -1032,8 +1034,8 @@
  </div>
  </div>
  <div class="form-row-three peca-fields">
- <div class="ac-wrapper"><label>Implante</label><input autocomplete="off" class="dente-implante" placeholder="Ex: IPX 4010S" oninput="acFilter(this,'implante')" onfocus="acFilter(this,'implante')" onchange="checkStockAlert(this.value); checkCompatibilidadeRow(this)" onblur="acClose(this)"><div class="ac-dropdown"></div><div class="aviso-compat"></div></div>
- <div class="ac-wrapper"><label>Pilar/Trans</label><input autocomplete="off" class="dente-pilar" placeholder="Ex: MUSR 04030" oninput="acFilter(this,'pilar')" onfocus="acFilter(this,'pilar')" onchange="checkStockAlert(this.value); checkCompatibilidadeRow(this)" onblur="acClose(this)"><div class="ac-dropdown"></div></div>
+ <div class="ac-wrapper"><label>Implante</label><input autocomplete="off" class="dente-implante" placeholder="Ex: IPX 4010S" oninput="acFilter(this,'implante')" onfocus="acFilter(this,'implante')" onchange="checkStockAlert(this.value); checkCompatibilidadeRow(this); atualizarTodosAvisosStockForm()" onblur="acClose(this)"><div class="ac-dropdown"></div><div class="aviso-compat"></div></div>
+ <div class="ac-wrapper"><label>Pilar/Trans</label><input autocomplete="off" class="dente-pilar" placeholder="Ex: MUSR 04030" oninput="acFilter(this,'pilar')" onfocus="acFilter(this,'pilar')" onchange="checkStockAlert(this.value); checkCompatibilidadeRow(this); atualizarTodosAvisosStockForm()" onblur="acClose(this)"><div class="ac-dropdown"></div></div>
  <div class="ac-wrapper ac-multi"><label>Adicional (até 10 peças)</label>
  <input type="hidden" class="dente-outros-data" value="[]">
  <input autocomplete="off" class="dente-outro-input" placeholder="Escrever/escolher e Enter" oninput="acFilter(this,'adicional')" onfocus="acFilter(this,'adicional')" onkeydown="handleOutroKeydown(event,this)" onblur="acClose(this)">
@@ -1041,6 +1043,7 @@
  <div class="outros-chips"></div>
  <button type="button" class="btn btn-small btn-accent" style="width:100%; margin-top:8px;" onclick="removeDenteRow('${idFila}')">Remover</button></div>
  </div>
+ <div class="aviso-stock"></div>
  </div>`;
  container.appendChild(document.createRange().createContextualFragment(rowHTML));
 
@@ -1054,6 +1057,7 @@
  checkCompatibilidadeRow(f.querySelector('.dente-implante'));
  }
  renderFaseContainers();
+ atualizarTodosAvisosStockForm();
  hasUnsavedChanges = true;
  }
 
@@ -1091,6 +1095,7 @@
  const resAcessorio = verificarAcessorioCompativel(pilarRef, valor);
  if (!resAcessorio.ok) showToast(resAcessorio.msg, 'warning');
  atualizarAvisosCompatRow(row);
+ atualizarTodosAvisosStockForm();
  hasUnsavedChanges = true;
  }
 
@@ -1101,6 +1106,7 @@
  arr.splice(idx, 1);
  hidden.value = JSON.stringify(arr);
  atualizarAvisosCompatRow(row);
+ atualizarTodosAvisosStockForm();
  hasUnsavedChanges = true;
  }
 
@@ -1120,6 +1126,7 @@
  function removeDenteRow(idFila) { 
  document.getElementById(idFila).remove(); 
  renderFaseContainers();
+ atualizarTodosAvisosStockForm();
  hasUnsavedChanges = true; 
  }
 
@@ -1265,12 +1272,17 @@
  ...faseData
  };
 
- if (editIndex === -1) {
- SurgeriesLog.unshift(dadosFicha); showToast(`Ficha criada e stock abatido!`);
+ const faltasPlaneamento = verificarStockPlaneamentoFicha(listaDentes);
+ const temPlaneamento = listaDentes.some(d => d.estado === 'Planeamento');
+ const temAtivos = listaDentes.some(d => d.estado !== 'Planeamento');
+ const isNovo = (editIndex === -1);
+
+ if (isNovo) {
+ SurgeriesLog.unshift(dadosFicha);
  } else {
  // Nota: com peças bloqueadas, as referências já foram forçadas aos valores
  // originais antes da reconciliação de stock, mais acima.
- SurgeriesLog[editIndex] = Object.assign(SurgeriesLog[editIndex], dadosFicha); showToast(`Ficha atualizada!`);
+ SurgeriesLog[editIndex] = Object.assign(SurgeriesLog[editIndex], dadosFicha);
  }
  
  localStorage.setItem('galimplant_surgeries_v3', JSON.stringify(SurgeriesLog));
@@ -1278,6 +1290,22 @@
  pecasBloqueadas = false;
  forceCancelEditing(); updateDashboard(); filterHistoryAndRender();
  scheduleGDriveAutoSync();
+
+ if (temPlaneamento && faltasPlaneamento.length > 0) {
+  const listaTxt = faltasPlaneamento.map(f => `• ${f.ref} (${f.desc}): Necessário ${f.necessario} | Em stock ${f.stock} → A encomendar: ${f.falta}`).join('\n');
+  showConfirm(
+   `Ficha de "${pName}" gravada com sucesso em Planeamento.\n\n⚠️ ATENÇÃO: O stock atual é INSUFICIENTE para a cirurgia planeada:\n\n${listaTxt}\n\nEstas peças constam na Lista de Encomendas para emissão de PDF para a Galimplant.\n\nDeseja abrir a Lista de Encomendas agora?`,
+   () => showEncomendas(),
+   "📦 Planeamento — Peças a Encomendar"
+  );
+  const btnConfirm = document.getElementById('modal-confirm-btn');
+  if (btnConfirm) btnConfirm.innerText = "📦 Abrir Lista de Encomendas";
+  showToast(`Ficha gravada em Planeamento. ${faltasPlaneamento.length} peça(s) a encomendar!`, "warning");
+ } else if (temPlaneamento && !temAtivos) {
+  showToast("Ficha gravada em Planeamento! Todas as peças estão disponíveis em stock.", "success");
+ } else {
+  showToast(isNovo ? "Ficha criada e stock abatido!" : "Ficha atualizada!");
+ }
  }
 
  function deleteSurgeryFromHistory(index) {
@@ -1399,7 +1427,22 @@
  }
  function updateSingleStock(ref, val) { CurrentStock[ref] = parseInt(val) || 0; localStorage.setItem('galimplant_stock_v3', JSON.stringify(CurrentStock)); renderStockTable(); updateDashboard(); scheduleGDriveAutoSync(); }
  function saveStockToStorage() { Object.keys(Catalogo).forEach(ref => { const _e3=document.getElementById('input_st_'+ref.replace(/[^a-zA-Z0-9]/g,'_')); CurrentStock[ref]=_e3?(parseInt(_e3.value)||0):(CurrentStock[ref]||0); }); localStorage.setItem('galimplant_stock_v3', JSON.stringify(CurrentStock)); renderStockTable(); showToast("Stock atualizado."); updateDashboard(); scheduleGDriveAutoSync(); }
- function checkStockAlert(ref) { if(ref && (CurrentStock[ref] || 0) === 0 && Catalogo[ref]) showToast(`Sem stock para: ${ref}`, "warning"); }
+ function checkStockAlert(ref) {
+  if (!ref || Catalogo[ref] === undefined) return;
+  const disp = CurrentStock[ref] || 0;
+  const dentes = getDentesFormValues();
+  let nec = 0;
+  dentes.forEach(d => {
+   const pecas = [d.implante, d.pilar].concat(d.outros || []).filter(Boolean);
+   pecas.forEach(p => { if (p.toUpperCase() === ref.toUpperCase()) nec++; });
+  });
+  if (nec === 0) nec = 1;
+  if (disp === 0) {
+   showToast(`Sem stock para "${ref}" (necessário nesta ficha: ${nec}, em stock: 0).`, "warning");
+  } else if (disp < nec) {
+   showToast(`Stock insuficiente para "${ref}" (necessário nesta ficha: ${nec}, em stock: ${disp}, em falta: ${nec - disp}).`, "warning");
+  }
+ }
 
  /* ══════════════════════════════════════════════════════════════════════════
     Compatibilidade Implante / Pilar / Adicionais
@@ -1553,6 +1596,78 @@
   });
   return problemas;
  }
+
+  // Calcula se as peças associadas a dentes/zonas em estado "Planeamento" têm stock suficiente no armário.
+  function verificarStockPlaneamentoFicha(dentes) {
+   const nec = {};
+   (dentes || []).forEach(d => {
+    if (d.estado !== 'Planeamento') return;
+    let pecas = [d.implante, d.pilar].concat(d.outros || []).filter(Boolean);
+    pecas.forEach(p => { nec[p] = (nec[p] || 0) + 1; });
+   });
+   const emFalta = [];
+   Object.keys(nec).forEach(ref => {
+    const st = CurrentStock[ref] || 0;
+    if (st < nec[ref]) {
+     emFalta.push({
+      ref: ref,
+      desc: Catalogo[ref] || '(fora do catálogo)',
+      necessario: nec[ref],
+      stock: st,
+      falta: nec[ref] - st
+     });
+    }
+   });
+   return emFalta;
+  }
+
+  // Percorre as linhas de dentes no formulário e atualiza o aviso visual de stock (.aviso-stock) em cada linha
+  function atualizarTodosAvisosStockForm() {
+   const dentes = getDentesFormValues();
+   const necTotal = {};
+   dentes.forEach(d => {
+    const pecas = [d.implante, d.pilar].concat(d.outros || []).filter(Boolean);
+    pecas.forEach(p => { necTotal[p] = (necTotal[p] || 0) + 1; });
+   });
+
+   document.querySelectorAll('.dente-row').forEach(row => {
+    const avisoStockBox = row.querySelector('.aviso-stock');
+    if (!avisoStockBox) return;
+    const estado = row.querySelector('.dente-estado').value;
+    const implanteRef = row.querySelector('.dente-implante').value.trim();
+    const pilarRef = row.querySelector('.dente-pilar').value.trim();
+    let outros = []; try { outros = JSON.parse(row.querySelector('.dente-outros-data').value || '[]'); } catch(e) { outros = []; }
+    const pecasDente = [implanteRef, pilarRef].concat(outros).filter(Boolean);
+
+    const msgs = [];
+    pecasDente.forEach(p => {
+     if (Catalogo[p] !== undefined) {
+      const disp = CurrentStock[p] || 0;
+      const nec = necTotal[p] || 1;
+      if (disp < nec) {
+       const falta = nec - disp;
+       if (estado === 'Planeamento') {
+        msgs.push(`• <strong>${escapeHTML(p)}</strong>: em stock <strong>${disp}</strong>, necessário nesta ficha <strong>${nec}</strong> (a encomendar: <strong>${falta}</strong>)`);
+       } else {
+        msgs.push(`• <strong>${escapeHTML(p)}</strong>: em stock <strong>${disp}</strong>, necessário nesta ficha <strong>${nec}</strong> (insuficiente para cirurgia imediata)`);
+       }
+      }
+     }
+    });
+
+    if (msgs.length > 0) {
+     const header = estado === 'Planeamento'
+      ? '📦 <strong>Planeamento — Peça(s) a Encomendar:</strong>'
+      : '⚠️ <strong>Atenção — Stock Insuficiente:</strong>';
+     avisoStockBox.innerHTML = `${header}<div style="margin-top:3px; padding-left:4px;">${msgs.join('<br>')}</div>`;
+     avisoStockBox.classList.add('show');
+    } else {
+     avisoStockBox.innerHTML = '';
+     avisoStockBox.classList.remove('show');
+    }
+   });
+  }
+
  function filterStockTable() { const q = document.getElementById('searchStock').value.toLowerCase(); document.querySelectorAll('.item-row').forEach(r => r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none'); }
 
  function filterHistoryAndRender() {

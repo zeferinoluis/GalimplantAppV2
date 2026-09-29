@@ -1302,7 +1302,11 @@
  let pecas = [];
  if(d.implante) pecas.push(d.implante); if(d.pilar) pecas.push(d.pilar); pecas = pecas.concat(d.outros || []);
  for(let p of pecas) { 
- if(!Catalogo[p]) { showToast(`Peça "${p}" não existe no catálogo. Grave no catálogo primeiro.`, "error"); return;}
+ if(!Catalogo[p]) {
+  const _eqC = refEquivalente(p);
+  const _sugC = (_eqC && Catalogo[_eqC] !== undefined) ? ` A referência intermutável "${_eqC}" existe no catálogo (${CurrentStock[_eqC] || 0} em stock).` : '';
+  showToast(`Peça "${p}" não existe no catálogo. Grave no catálogo primeiro.` + _sugC, "error"); return;
+ }
  }
  }
  // Soma a necessidade TOTAL de cada referência em todos os dentes/zonas desta ficha
@@ -1318,7 +1322,10 @@
  });
  for (const p of Object.keys(necessario)) {
  const disponivel = CurrentStock[p] || 0;
- if (disponivel < necessario[p]) { showToast(`Stock insuficiente para: ${p} (necessário ${necessario[p]}, disponível ${disponivel}). Atualize o inventário antes de gravar.`, "error"); return; }
+  if (disponivel < necessario[p]) {
+   const _sugS = sugestaoEquivalente(p, necessario[p]);
+   showToast(`Stock insuficiente para: ${p} (necessário ${necessario[p]}, disponível ${disponivel}).` + (_sugS ? ' ' + _sugS : '') + ' Atualize o inventário ou use a referência sugerida antes de gravar.', "error"); return;
+  }
  }
  let avisos = [];
  listaDentes.forEach(d => {
@@ -1352,7 +1359,11 @@
  for (let i = 0; i < listaDentes.length; i++) {
  const pecasTodas = [listaDentes[i].implante, listaDentes[i].pilar].concat(listaDentes[i].outros || []).filter(Boolean);
  for (let p of pecasTodas) {
- if (!Catalogo[p]) { showToast(`Peça "${p}" não existe no catálogo. Grave no catálogo primeiro.`, "error"); return; }
+ if (!Catalogo[p]) {
+  const _eqC = refEquivalente(p);
+  const _sugC = (_eqC && Catalogo[_eqC] !== undefined) ? ` A referência intermutável "${_eqC}" existe no catálogo (${CurrentStock[_eqC] || 0} em stock).` : '';
+  showToast(`Peça "${p}" não existe no catálogo. Grave no catálogo primeiro.` + _sugC, "error"); return;
+ }
  }
  }
 
@@ -1378,7 +1389,10 @@
  const stockSimulado = Object.assign({}, CurrentStock);
  Object.keys(devolver).forEach(p => { stockSimulado[p] = (stockSimulado[p] || 0) + devolver[p]; });
  for (let p of Object.keys(abater)) {
- if ((stockSimulado[p] || 0) < abater[p]) { showToast(`Stock insuficiente para: ${p}. Atualize o inventário (encomenda recebida) antes de mudar o estado.`, "error"); return; }
+ if ((stockSimulado[p] || 0) < abater[p]) {
+   const _sugS = sugestaoEquivalente(p, abater[p]);
+   showToast(`Stock insuficiente para: ${p}.` + (_sugS ? ' ' + _sugS : '') + ' Atualize o inventário (encomenda recebida) ou use a referência sugerida antes de mudar o estado.', "error"); return;
+  }
  stockSimulado[p] -= abater[p];
  }
 
@@ -1587,7 +1601,15 @@
  }
  function saveStockToStorage() { Object.keys(Catalogo).forEach(ref => { const _e3=document.getElementById(stockInputId(ref)); CurrentStock[ref]=_e3?parseStockValor(_e3.value):(CurrentStock[ref]||0); }); persistir('galimplant_stock_v3', JSON.stringify(CurrentStock)); renderStockTable(); showToast("Stock atualizado."); updateDashboard(); scheduleGDriveAutoSync(); }
  function checkStockAlert(ref) {
-  if (!ref || Catalogo[ref] === undefined) return;
+  if (!ref) return;
+  const eq = refEquivalente(ref);
+  // Referência fora do catálogo: se a intermutável existir, vale a pena dizê-lo já.
+  if (Catalogo[ref] === undefined) {
+   if (eq && Catalogo[eq] !== undefined) {
+    showToast(`"${ref}" não existe no catálogo. A referência intermutável ${eq} existe e tem ${CurrentStock[eq] || 0} em stock.`, "warning");
+   }
+   return;
+  }
   const disp = CurrentStock[ref] || 0;
   const dentes = getDentesFormValues();
   let nec = 0;
@@ -1596,10 +1618,14 @@
    pecas.forEach(p => { if (p.toUpperCase() === ref.toUpperCase()) nec++; });
   });
   if (nec === 0) nec = 1;
-  if (disp === 0) {
-   showToast(`Sem stock para "${ref}" (necessário nesta ficha: ${nec}, em stock: 0).`, "warning");
-  } else if (disp < nec) {
-   showToast(`Stock insuficiente para "${ref}" (necessário nesta ficha: ${nec}, em stock: ${disp}, em falta: ${nec - disp}).`, "warning");
+  if (disp < nec) {
+   const sug = sugestaoEquivalente(ref, nec);
+   const extra = sug ? ' ' + sug : '';
+   if (disp === 0) {
+    showToast(`Sem stock para "${ref}" (necessário nesta ficha: ${nec}, em stock: 0).` + extra, "warning");
+   } else {
+    showToast(`Stock insuficiente para "${ref}" (necessário nesta ficha: ${nec}, em stock: ${disp}, em falta: ${nec - disp}).` + extra, "warning");
+   }
   }
  }
 
@@ -1756,24 +1782,112 @@
   return problemas;
  }
 
+ /* ══════════════════════════════════════════════════════════════════════════
+    Intermutabilidade de implantes: cubeta aberta ↔ cubeta fechada
+    ════════════════════════════════════════════════════════════════════════
+    O IPXC é exatamente o mesmo implante que o IPX, e o ICIC o mesmo que o ICI —
+    a única diferença é o acondicionamento (cubeta fechada). Como a parte
+    numérica identifica diâmetro e comprimento, "IPX 4010S" e "IPXC 4010S" são
+    intermutáveis, tal como "ICI 03510S" e "ICIC 03510S".
+
+    A série M2 (Único) fica de fora: só existe em cubeta fechada e NÃO é
+    intermutável com a métrica clássica. Para isso, a regra exige que depois do
+    prefixo venha apenas o código numérico + S, o que exclui automaticamente
+    referências como "IPXC M2 4010S".
+
+    A equivalência serve para SUGERIR e para agrupar a necessidade de compra.
+    Nunca substitui a referência sozinha: o registo clínico tem de dizer o que foi
+    efetivamente usado, e é isso que o abate de stock reflete (com rastreabilidade).
+    ══════════════════════════════════════════════════════════════════════════ */
+ var PARES_INTERMUTAVEIS = [
+  { aberta: 'IPX ', fechada: 'IPXC ' },
+  { aberta: 'ICI ', fechada: 'ICIC ' }
+ ];
+ var RE_CODIGO_IMPLANTE = /^\d{4,5}S$/;
+
+ // Devolve a referência intermutável (cubeta aberta ↔ fechada) ou null se não houver par.
+ function refEquivalente(ref) {
+  if (!ref) return null;
+  var alvo = String(ref).trim();
+  for (var i = 0; i < PARES_INTERMUTAVEIS.length; i++) {
+   var par = PARES_INTERMUTAVEIS[i];
+   if (alvo.indexOf(par.aberta) === 0 && RE_CODIGO_IMPLANTE.test(alvo.slice(par.aberta.length))) {
+    return par.fechada + alvo.slice(par.aberta.length);
+   }
+   if (alvo.indexOf(par.fechada) === 0 && RE_CODIGO_IMPLANTE.test(alvo.slice(par.fechada.length))) {
+    return par.aberta + alvo.slice(par.fechada.length);
+   }
+  }
+  return null;
+ }
+
+ // Forma canónica do par, para agrupar necessidades de stock das duas referências.
+ function chaveStock(ref) {
+  if (!ref) return ref;
+  var eq = refEquivalente(ref);
+  if (!eq) return String(ref);
+  return eq.length > String(ref).length ? eq : String(ref);
+ }
+
+ // Referências do par que existem no catálogo (a pedida e a intermutável).
+ function refsParStock(ref) {
+  var lista = [];
+  [ref, refEquivalente(ref)].forEach(function(r) {
+   if (r && Catalogo[r] !== undefined && lista.indexOf(r) === -1) lista.push(r);
+  });
+  return lista;
+ }
+
+ // Stock somado do par intermutável.
+ function stockParIntermutavel(ref) {
+  var refs = refsParStock(ref);
+  if (!refs.length) return CurrentStock[ref] || 0;
+  return refs.reduce(function(t, r) { return t + (CurrentStock[r] || 0); }, 0);
+ }
+
+ // Texto de sugestão a mostrar quando falta a referência pedida mas existe a
+ // intermutável. Devolve '' quando não há nada a sugerir.
+ function sugestaoEquivalente(ref, necessario) {
+  var eq = refEquivalente(ref);
+  if (!eq) return '';
+  var dispEq = CurrentStock[eq] || 0;
+  if (dispEq <= 0) return '';
+  var descEq = Catalogo[eq] !== undefined ? Catalogo[eq] : '(fora do catálogo)';
+  var cobre = (necessario && dispEq < necessario) ? ' (cobre ' + dispEq + ' de ' + necessario + ')' : '';
+  return 'Referência intermutável ' + eq + ' — ' + descEq + ' — com ' + dispEq + ' em stock' + cobre + '.';
+ }
+
+ // Escapa uma string para ser usada dentro de um literal JavaScript em atributo HTML.
+ function jsStr(s) { return String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
+
   // Calcula se as peças associadas a dentes/zonas em estado "Planeamento" têm stock suficiente no armário.
   function verificarStockPlaneamentoFicha(dentes) {
-   const nec = {};
+   const grupos = {};
    (dentes || []).forEach(d => {
     if (d.estado !== 'Planeamento') return;
     let pecas = [d.implante, d.pilar].concat(d.outros || []).filter(Boolean);
-    pecas.forEach(p => { nec[p] = (nec[p] || 0) + 1; });
+    pecas.forEach(p => {
+     const chave = chaveStock(p);
+     if (!grupos[chave]) grupos[chave] = { refs: [], stockRefs: [], necessario: 0 };
+     const g = grupos[chave];
+     g.necessario++;
+     if (g.refs.indexOf(p) === -1) g.refs.push(p);
+     refsParStock(p).forEach(r => { if (g.stockRefs.indexOf(r) === -1) g.stockRefs.push(r); });
+    });
    });
    const emFalta = [];
-   Object.keys(nec).forEach(ref => {
-    const st = CurrentStock[ref] || 0;
-    if (st < nec[ref]) {
+   Object.keys(grupos).forEach(chave => {
+    const g = grupos[chave];
+    // Stock somado do par intermutável (cubeta aberta + cubeta fechada).
+    const st = g.stockRefs.reduce((t, r) => t + (CurrentStock[r] || 0), 0);
+    if (st < g.necessario) {
+     const refsExibidas = g.refs.concat(g.stockRefs.filter(r => g.refs.indexOf(r) === -1));
      emFalta.push({
-      ref: ref,
-      desc: Catalogo[ref] || '(fora do catálogo)',
-      necessario: nec[ref],
+      ref: refsExibidas.join(' / '),
+      desc: refsExibidas.map(r => Catalogo[r] || '(fora do catálogo)').join(' | '),
+      necessario: g.necessario,
       stock: st,
-      falta: nec[ref] - st
+      falta: g.necessario - st
      });
     }
    });
@@ -1781,6 +1895,20 @@
   }
 
   // Percorre as linhas de dentes no formulário e atualiza o aviso visual de stock (.aviso-stock) em cada linha
+  // Troca o implante da linha pela referência intermutável, a pedido do utilizador.
+  // O abate de stock passa a ser feito na referência efetivamente usada.
+  function usarImplanteEquivalente(rowId, ref) {
+   const row = document.getElementById(rowId);
+   if (!row) return;
+   const campo = row.querySelector('.dente-implante');
+   if (!campo) return;
+   if (campo.disabled) { showToast('As peças desta ficha estão bloqueadas. Use "Corrigir Peças" para as alterar.', 'warning'); return; }
+   campo.value = ref;
+   campo.dispatchEvent(new Event('change')); // dispara avisos de stock e de compatibilidade
+   hasUnsavedChanges = true;
+   showToast('Implante alterado para ' + ref + '. O stock será abatido nesta referência ao gravar.', 'success');
+  }
+
   function atualizarTodosAvisosStockForm() {
    const dentes = getDentesFormValues();
    const necTotal = {};
@@ -1799,25 +1927,51 @@
     const pecasDente = [implanteRef, pilarRef].concat(outros).filter(Boolean);
 
     const msgs = [];
+    let temFaltaReal = false; // distingue "falta mesmo" de "está coberto pela intermutável"
     pecasDente.forEach(p => {
      if (Catalogo[p] !== undefined) {
       const disp = CurrentStock[p] || 0;
       const nec = necTotal[p] || 1;
       if (disp < nec) {
-       const falta = nec - disp;
+       // Com intermutabilidade, o que conta para "falta" é o stock do PAR
+       // (cubeta aberta + cubeta fechada), tal como na Lista de Encomendas.
+       const dispPar = stockParIntermutavel(p);
+       const faltaPar = Math.max(0, nec - dispPar);
+       if (faltaPar > 0) temFaltaReal = true;
        if (estado === 'Planeamento') {
-        msgs.push(`• <strong>${escapeHTML(p)}</strong>: em stock <strong>${disp}</strong>, necessário nesta ficha <strong>${nec}</strong> (a encomendar: <strong>${falta}</strong>)`);
+        msgs.push(`• <strong>${escapeHTML(p)}</strong>: em stock <strong>${disp}</strong>, necessário nesta ficha <strong>${nec}</strong>` + (faltaPar > 0 ? ` (a encomendar: <strong>${faltaPar}</strong>)` : ''));
        } else {
-        msgs.push(`• <strong>${escapeHTML(p)}</strong>: em stock <strong>${disp}</strong>, necessário nesta ficha <strong>${nec}</strong> (insuficiente para cirurgia imediata)`);
+        msgs.push(`• <strong>${escapeHTML(p)}</strong>: em stock <strong>${disp}</strong>, necessário nesta ficha <strong>${nec}</strong>` + (faltaPar > 0 ? ' (insuficiente para cirurgia imediata)' : ' (coberto pela referência intermutável)'));
        }
       }
      }
     });
 
+    // Sugestão da referência intermutável (cubeta aberta ↔ fechada) quando a pedida não
+    // tem stock suficiente. Com botão para aplicar num clique — nunca substitui sozinha,
+    // para que o registo clínico diga sempre o que foi efetivamente usado.
+    const eqLinha = refEquivalente(implanteRef);
+    if (eqLinha && Catalogo[implanteRef] !== undefined && Catalogo[eqLinha] !== undefined) {
+     const dispImpl = CurrentStock[implanteRef] || 0;
+     const necImpl = necTotal[implanteRef] || 1;
+     const dispEq = CurrentStock[eqLinha] || 0;
+     if (dispImpl < necImpl && dispEq > 0) {
+      const cobreTudo = dispEq >= (necImpl - dispImpl);
+      msgs.push('&#8596; <strong>' + escapeHTML(eqLinha) + '</strong> é intermutável com ' + escapeHTML(implanteRef)
+       + ' e tem <strong>' + dispEq + '</strong> em stock'
+       + (cobreTudo ? ' — cobre a falta' : ' — cobre parte da falta')
+       + ' <button type="button" class="btn btn-small" style="background:#8e5a00;" onclick="usarImplanteEquivalente(\'' + jsStr(row.id) + '\',\'' + jsStr(eqLinha) + '\')">Usar ' + escapeHTML(eqLinha) + '</button>');
+     }
+    }
+
     if (msgs.length > 0) {
-     const header = estado === 'Planeamento'
-      ? '📦 <strong>Planeamento — Peça(s) a Encomendar:</strong>'
-      : '⚠️ <strong>Atenção — Stock Insuficiente:</strong>';
+     // O cabeçalho não deve falar em encomenda quando a necessidade fica coberta
+     // pela referência intermutável (cubeta aberta ↔ fechada).
+     const header = !temFaltaReal
+      ? '&#8596; <strong>Referência intermutável disponível:</strong>'
+      : (estado === 'Planeamento'
+       ? '📦 <strong>Planeamento — Peça(s) a Encomendar:</strong>'
+       : '⚠️ <strong>Atenção — Stock Insuficiente:</strong>');
      avisoStockBox.innerHTML = `${header}<div style="margin-top:3px; padding-left:4px;">${msgs.join('<br>')}</div>`;
      avisoStockBox.classList.add('show');
     } else {
@@ -1957,17 +2111,36 @@
  function formatDate(d) { return d ? d.split("-").reverse().join("/") : ""; }
 
  // --- LISTA DE ENCOMENDAS (peças necessárias para dentes em Planeamento) ---
+ // Necessidades de compra agrupadas por par intermutável: se houver IPXC em stock, a
+ // necessidade de IPX fica coberta e não se encomenda o que já existe na prateleira.
  function computeEncomendas() {
-  const necessidades = {};
+  const grupos = {};
   SurgeriesLog.forEach(f => (f.dentesTratados || []).forEach(d => {
    if (d.estado !== 'Planeamento') return;
    [d.implante, d.pilar].concat(getOutrosArray(d)).filter(Boolean).forEach(p => {
-    necessidades[p] = (necessidades[p] || 0) + 1;
+    const chave = chaveStock(p);
+    if (!grupos[chave]) grupos[chave] = { refs: [], stockRefs: [], necessario: 0 };
+    const g = grupos[chave];
+    g.necessario++;
+    if (g.refs.indexOf(p) === -1) g.refs.push(p);
+    refsParStock(p).forEach(r => { if (g.stockRefs.indexOf(r) === -1) g.stockRefs.push(r); });
    });
   }));
-  return Object.keys(necessidades).sort().map(ref => {
-   const nec = necessidades[ref]; const st = CurrentStock[ref] || 0;
-   return { ref, desc: Catalogo[ref] || '(fora do catálogo)', necessario: nec, stock: st, falta: Math.max(0, nec - st) };
+  return Object.keys(grupos).sort().map(chave => {
+   const g = grupos[chave];
+   const st = g.stockRefs.reduce((t, r) => t + (CurrentStock[r] || 0), 0);
+   // Referências a mostrar: as pedidas e também as intermutáveis que contribuíram com
+   // stock. Sem isto, uma linha com "stock 3" para uma referência que está a zero
+   // pareceria um erro de contas.
+   const refsExibidas = g.refs.concat(g.stockRefs.filter(r => g.refs.indexOf(r) === -1));
+   return {
+    ref: refsExibidas.join(' / '),
+    desc: refsExibidas.map(r => Catalogo[r] || '(fora do catálogo)').join(' | '),
+    necessario: g.necessario,
+    stock: st,
+    falta: Math.max(0, g.necessario - st),
+    refs: refsExibidas
+   };
   });
  }
 
@@ -1987,7 +2160,10 @@
     const badge = i.falta > 0
      ? `<span class="badge badge-danger">${i.falta}</span>`
      : `<span class="badge badge-success">0</span>`;
-    return `<tr><td><strong>${escapeHTML(i.ref)}</strong></td><td style="font-size:0.85em;">${escapeHTML(i.desc)}</td><td style="text-align:center;">${i.necessario}</td><td style="text-align:center;">${i.stock}</td><td style="text-align:center;">${badge}</td></tr>`;
+    const agrupada = (i.refs && i.refs.length > 1)
+      ? ' title="Referências intermutáveis (cubeta aberta ↔ cubeta fechada): a necessidade e o stock são contados em conjunto."'
+      : '';
+    return `<tr${agrupada}><td><strong>${escapeHTML(i.ref)}</strong></td><td style="font-size:0.85em;">${escapeHTML(i.desc)}</td><td style="text-align:center;">${i.necessario}</td><td style="text-align:center;">${i.stock}</td><td style="text-align:center;">${badge}</td></tr>`;
    }).join('');
   }
   document.getElementById('encomendas-modal').classList.add('show');
@@ -2036,7 +2212,8 @@
  (SurgeriesLog || []).forEach(f => (f.dentesTratados || []).forEach(d => {
   [d.implante, d.pilar].concat(getOutrosArray(d)).filter(Boolean).forEach(p => refsUsadas.add(p));
  }));
- const emRutura = Array.from(refsUsadas).filter(r => (CurrentStock[r] || 0) === 0).sort();
+ // Conta como esgotada apenas se o par intermutável (cubeta aberta + fechada) estiver a zero.
+ const emRutura = Array.from(refsUsadas).filter(r => stockParIntermutavel(r) === 0).sort();
  const elStock = document.getElementById('dashStock');
  elStock.innerText = emRutura.length;
  elStock.style.cursor = emRutura.length ? 'pointer' : 'default';
@@ -2983,7 +3160,15 @@
    }).slice(0, 60);
    if (keys.length === 0) { dd.classList.remove('open'); return; }
    dd.innerHTML = keys.map(function(k) {
-     return '<div class="ac-item" onmousedown="acSelect(this)" data-val="' + escapeHTML(k) + '"><strong>' + escapeHTML(k) + '</strong><span>' + escapeHTML(Catalogo[k] || '') + '</span></div>';
+     var extraEq = '';
+     if (tipo === 'implante') {
+      var _eq = refEquivalente(k);
+      var _dispEq = _eq ? (CurrentStock[_eq] || 0) : 0;
+      if (_eq && _dispEq > 0 && (CurrentStock[k] || 0) === 0) {
+       extraEq = ' <span style="color:#8e5a00; font-weight:600;">&#8596; ' + escapeHTML(_eq) + ' (' + _dispEq + ' em stock)</span>';
+      }
+     }
+     return '<div class="ac-item" onmousedown="acSelect(this)" data-val="' + escapeHTML(k) + '"><strong>' + escapeHTML(k) + '</strong><span>' + escapeHTML(Catalogo[k] || '') + extraEq + '</span></div>';
    }).join('');
    acPosition(input, dd);
    dd.classList.add('open');

@@ -14,8 +14,9 @@
  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
  <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
- <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://accounts.google.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://www.googleapis.com https://oauth2.googleapis.com https://accounts.google.com; frame-src https://accounts.google.com; object-src 'none'; base-uri 'self'; form-action 'self';">
-
+ <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://accounts.google.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://www.googleapis.com https://oauth2.googleapis.com https://accounts.google.com; frame-src https://accounts.google.com; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests;">
+ <!-- Nota de implementação: 'frame-ancestors' e 'report-uri' não são suportados em
+      <meta>; devem ser enviados como cabeçalhos HTTP pelo servidor que aloja a aplicação. -->
  <script src="jspdf.umd.min.js"></script>
  <script src="jspdf.plugin.autotable.min.js"></script>
  <script src="https://accounts.google.com/gsi/client" async defer></script>
@@ -133,16 +134,16 @@
 
  .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 10000; opacity: 0; transition: opacity 0.2s; }
  .modal-overlay.show { display: flex; opacity: 1; }
- .modal-box { background: #fff; padding: 25px; border-radius: 8px; width: 90%; max-width: 450px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); }
+ .modal-box { background: #fff; padding: 25px; border-radius: 8px; width: 90%; max-width: 450px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); max-height: 80vh; overflow-y: auto; }
  .modal-box h3 { color: var(--accent); margin-bottom: 15px; }
  .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top:20px; }
  
- @media print {
- body * { visibility: hidden; }
- #printArea, #printArea * { visibility: visible; }
- #printArea { position: absolute; left: 0; top: 0; width: 100%; }
- .no-print { display: none !important; }
- }
+ /* ── Aviso de integridade dos dados (referências órfãs em fichas antigas) ── */
+ #integridade-aviso { background: #fff8e1; border: 1px solid #f0c36d; border-left: 5px solid var(--warning); border-radius: 6px; padding: 12px 16px; margin-bottom: 20px; font-size: 0.88em; color: #6b4e00; display: none; }
+ #integridade-aviso.show { display: block; }
+ #integridade-aviso ul { margin: 6px 0 0; padding-left: 20px; }
+ #integridade-aviso .fechar-aviso { float: right; background: none; border: none; color: #6b4e00; font-weight: bold; cursor: pointer; font-size: 1.15em; line-height: 1; padding: 0 2px; }
+
  /* ── Custom Autocomplete ── */
  .ac-wrapper { position: relative; }
  .ac-dropdown {
@@ -179,7 +180,7 @@
 <datalist id="dlImplantes"></datalist>
 <datalist id="dlPilares"></datalist>
 <datalist id="dlAdicionais"></datalist>
-<div id="toast-container"></div>
+<div id="toast-container" aria-live="polite" aria-atomic="true"></div>
 
 <div id="custom-modal" class="modal-overlay" onclick="if(event.target===this)closeModal()">
  <div class="modal-box">
@@ -225,12 +226,13 @@
  </div>
 </div>
 
-<div class="container no-print">
+<div class="container">
  <header>
  <div class="logo-container">
  <div class="logo-text">
  <span class="logo-main">Clínica Médico-Dentária de Aver-o-Mar, Lda</span>
  <span class="logo-sub">Diretor Clínico: Luís Zeferino (OMD 01162) | Rua Aquilino Ribeiro, 315 4900-441 Viana do Castelo</span>
+ <a href="Manual_de_Instrucoes_e_Utilizacao_Galimplant.pdf" target="_blank" rel="noopener" style="color:#9bc2e6; font-size:11px; margin-top:5px; text-decoration:underline; width:fit-content;">&#128218; Manual de Instruções e Utilização</a>
  </div>
  </div>
 
@@ -243,6 +245,8 @@
  <button class="btn" onclick="document.getElementById('importFile').click()">Importar</button>
  <input type="file" id="importFile" style="display:none" onchange="importBackup(event)">
  </div>
+ <label class="gdrive-checks" style="flex-direction:row; align-items:center; gap:6px;"><input type="checkbox" id="exportEncrypt" onchange="setExportEncrypt(this.checked)"> Encriptar backup exportado (recomendado — contém dados de saúde)</label>
+ <button class="btn btn-small" id="btnPrePull" style="display:none; background:#8e5a00; width:100%;" onclick="restaurarPrePullBackup()">&#8617;&#65039; Recuperar estado anterior à última sincronização</button>
  <span id="backup-status" class="backup-info">Último backup: A verificar...</span>
  </div>
 
@@ -255,6 +259,7 @@
  <button class="btn" id="gdrive-sync-btn" onclick="gdrivePush()" style="display:none;">Enviar agora</button>
  <button class="btn" id="gdrive-pull-btn" onclick="gdrivePull()" style="display:none;">Transferir da nuvem</button>
  <button class="btn" id="gdrive-versions-btn" onclick="showVersoes()" style="display:none;">&#128336; Versões Anteriores</button>
+ <button class="btn btn-accent" id="gdrive-disconnect-btn" onclick="desligarGDrive()" style="display:none;">Desligar</button>
  </div>
  <div id="gdrive-setup" style="margin-top:8px; font-size:0.8em; color:#d6e6f5;">
  <label style="display:block; margin-bottom:4px;">Client ID OAuth do Google (uma vez por dispositivo):</label>
@@ -278,6 +283,8 @@
  </div>
  </header>
 
+ <div id="integridade-aviso"></div>
+
  <div class="dashboard-grid">
  <div class="dash-card">
  <h4>Fichas Ativas</h4>
@@ -287,8 +294,8 @@
  <h4>Consultas &lt; 7 Dias</h4>
  <div class="value" id="dashAlertas">0</div>
  </div>
- <div class="dash-card dash-warning">
- <h4>Peças em Rutura</h4>
+ <div class="dash-card dash-warning" title="Peças já usadas em fichas clínicas que estão com stock 0.">
+ <h4>Peças Esgotadas (em uso)</h4>
  <div class="value" id="dashStock">0</div>
  </div>
  <div class="dash-card dash-success">
@@ -413,8 +420,6 @@
  </div>
 </div>
 
-<div id="printArea" style="visibility:hidden; position:absolute; top:0; left:0; width:100%;"></div>
-
 <script>
  const LOGO_CLINICA_B64 = 'data:image/png;base64,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';
  let Catalogo = {};
@@ -428,6 +433,11 @@
  let pecasBloqueadas = false;
  let modalCallback = null;
  let modalQueue = [];
+
+ // Charset permitido para referências do catálogo. Usado tanto na criação/edição manual
+ // como na validação de backups importados: as referências são inseridas em HTML e em
+ // atributos, por isso nunca devem poder conter aspas, <, > ou &.
+ const REF_CATALOGO_RE = /^[A-Za-z0-9 ._\/-]+$/;
 
  // Aviso de fecho acidental com dados por gravar
  window.addEventListener('beforeunload', (e) => {
@@ -799,7 +809,7 @@
  try { CatalogDescOverrides = JSON.parse(localStorage.getItem('galimplant_catalog_descoverrides_v1')) || {}; } catch(e) { CatalogDescOverrides = {}; }
  try { CatalogHiddenDefaults = JSON.parse(localStorage.getItem('galimplant_catalog_hidden_v1')) || []; } catch(e) { CatalogHiddenDefaults = []; }
  applyCatalogAdjustments();
- localStorage.setItem('galimplant_catalog_v1', JSON.stringify(Catalogo));
+ persistir('galimplant_catalog_v1', JSON.stringify(Catalogo));
 
  populateDatalist();
 
@@ -813,7 +823,9 @@
  const savedSurgeries = localStorage.getItem('galimplant_surgeries_v3');
  if (savedSurgeries) { SurgeriesLog = JSON.parse(savedSurgeries); }
 
- verifyDataIntegrity();
+ const _integridade = verifyDataIntegrity();
+ _integridade.ambiente = avisosAmbiente();
+ renderAvisoIntegridade(_integridade);
 
  renderStockTable();
  renderCatalogManager();
@@ -821,15 +833,35 @@
  addDenteRow(); // Instancia o primeiro dente e desenha as fases automaticamente
  updateDashboard();
  checkBackupStatus();
+ atualizarBotaoPrePull();
+ const _chkExp = document.getElementById('exportEncrypt');
+ if (_chkExp) _chkExp.checked = exportEncryptEnabled();
  hasUnsavedChanges = false; // addDenteRow() marca a flag como true; no arranque não há nada por guardar
  document.getElementById('modal-confirm-btn').addEventListener('click', function() { if (modalCallback) modalCallback(); closeModal(); });
+ pedirPersistenciaArmazenamento();
  });
 
  function preventNormalSubmit(e) { e.preventDefault(); }
+
+ // Todas as gravações passam por aqui. Antes, um QuotaExceededError (armazenamento cheio)
+ // abortava a função a meio — por exemplo, depois de o stock já ter sido abatido em memória —
+ // sem qualquer mensagem para o utilizador. Agora falha de forma visível e não interrompe.
+ function persistir(chave, valor) {
+ try { window.localStorage.setItem(chave, valor); return true; }
+ catch (e) {
+  console.error('[Armazenamento] Falha ao gravar', chave, e);
+  showToast('Não foi possível gravar os dados neste browser (armazenamento cheio ou bloqueado). Exporte um backup e liberte espaço.', 'error');
+  return false;
+ }
+ }
+
  
  function showToast(message, type = 'success') {
  const container = document.getElementById('toast-container');
- const toast = document.createElement('div'); toast.className = `toast ${type}`; toast.innerHTML = `<span>${message}</span>`;
+ const toast = document.createElement('div'); toast.className = `toast ${type}`;
+ // textContent, nunca innerHTML: as mensagens incluem valores introduzidos pelo
+ // utilizador (referências, nomes de dentes) que não devem ser interpretados como HTML.
+ const span = document.createElement('span'); span.textContent = message; toast.appendChild(span);
  container.appendChild(toast);
  setTimeout(() => toast.classList.add('show'), 10);
  setTimeout(() => { toast.classList.remove('show'); setTimeout(() => toast.remove(), 300); }, 3500);
@@ -851,7 +883,7 @@
  if (CurrentStock[ref] < 0) { CurrentStock[ref] = 0; stockCorrigido++; }
  });
  if (stockCorrigido > 0) {
- localStorage.setItem('galimplant_stock_v3', JSON.stringify(CurrentStock));
+ persistir('galimplant_stock_v3', JSON.stringify(CurrentStock));
  console.warn(`[Integridade] ${stockCorrigido} referência(s) com stock negativo foram corrigidas para 0.`);
  }
 
@@ -866,6 +898,30 @@
  if (refsOrfas.size > 0) {
  console.warn('[Integridade] Fichas com referências que já não existem no catálogo atual:', Array.from(refsOrfas));
  }
+ return { stockCorrigido: stockCorrigido, refsOrfas: Array.from(refsOrfas).sort() };
+ }
+
+ // Mostra (ou esconde) o aviso de integridade no topo da página. Antes, estes
+ // problemas só apareciam na consola do browser — invisíveis para quem usa a app.
+ function renderAvisoIntegridade(info) {
+ const box = document.getElementById('integridade-aviso');
+ if (!box) return;
+ const pontos = [];
+ if (info && info.stockCorrigido > 0) {
+ pontos.push(`${info.stockCorrigido} referência(s) com stock negativo foram corrigidas para 0.`);
+ }
+ if (info && info.refsOrfas && info.refsOrfas.length) {
+ pontos.push(`Há fichas clínicas que usam peças que já não constam do catálogo atual: <strong>${info.refsOrfas.map(escapeHTML).join(', ')}</strong>. O histórico não foi alterado — estas fichas continuam a ser consultadas, editadas e impressas normalmente.`);
+ }
+ if (info && info.ambiente && info.ambiente.length) {
+ info.ambiente.forEach(function(a) { pontos.push(escapeHTML(a)); });
+ }
+ if (!pontos.length) { box.classList.remove('show'); box.innerHTML = ''; return; }
+ box.innerHTML = '<button type="button" class="fechar-aviso" title="Fechar" onclick="document.getElementById(\'integridade-aviso\').classList.remove(\'show\')">&#10005;</button>'
+  + '&#9888;&#65039; <strong>Aviso de integridade dos dados</strong><ul style="margin-top:6px;">'
+  + pontos.map(p => '<li>' + p + '</li>').join('')
+  + '</ul>';
+ box.classList.add('show');
  }
 
  function showConfirm(message, onConfirm, title="⚠️ Atenção", infoOnly=false) {
@@ -909,6 +965,9 @@
 
  // --- MECÂNICA RESTAURADA: FASES POR DENTE ---
  let _faseRenderTimer = null;
+ // Valores de fase provenientes de uma ficha que acabou de ser aberta para edição.
+ // São a fonte autoritativa do próximo render (ver restoreFaseContainers).
+ let _faseValoresAutoritativos = null;
  function renderFaseContainers() {
  if (_faseRenderTimer) return;
  _faseRenderTimer = requestAnimationFrame(() => { _faseRenderTimer = null; _renderFaseContainersInner(); });
@@ -922,11 +981,17 @@
  const labels = { cir: 'Data da Cirurgia', reab: 'Data de Avaliação / Reabertura', prost: 'Data da Colocação da Prótese' };
  const notesLabels = { cir: 'Notas / Intercorrências da Cirurgia', reab: 'Notas de Reabertura / Cicatrização', prost: 'Notas da Prótese / Ajustes Oclusais' };
  const placeholders = { cir: 'Evolução e observações da cirurgia...', reab: 'Evolução e observações da reabertura...', prost: 'Detalhes finais da reabilitação...' };
+ const autoritativo = (_faseValoresAutoritativos && _faseValoresAutoritativos[faseKey]) || null;
+ const autoMapa = autoritativo ? autoritativo.mapa : null;
+ const autoLista = autoritativo ? autoritativo.lista : null;
  
  // Guarda os valores que já estavam preenchidos para não os apagar ao atualizar
- const saved = {};
+ const saved = {};          // por nome do dente (chave de gravação)
+ const savedPorLinha = {};  // por id da linha do dente (estável na sessão)
  container.querySelectorAll('.fase-dente-entry').forEach(el => {
- saved[el.dataset.denteKey] = { date: el.querySelector('.fase-date').value, notes: el.querySelector('.fase-notes').value };
+ const vals = { date: el.querySelector('.fase-date').value, notes: el.querySelector('.fase-notes').value };
+ saved[el.dataset.denteKey] = vals;
+ if (el.dataset.rowId) savedPorLinha[el.dataset.rowId] = vals;
  });
  
  container.innerHTML = '';
@@ -937,17 +1002,26 @@
  // sessões/recargas da página, o que fazia a evolução por dente "desaparecer" ao reabrir uma ficha
  // para editar numa sessão diferente daquela em que foi criada.
  const key = denteId;
- const savedVals = saved[key] || (i === 0 ? (saved['_single'] || {}) : {});
- container.appendChild(buildFaseRow(faseKey, denteId, labels[faseKey], notesLabels[faseKey], placeholders[faseKey], savedVals, key));
+ // Prioridade: valores da ficha acabada de abrir > valores já no DOM para esta
+ // chave > registo antigo de dente único ('_single') da primeira linha.
+ let daFicha = autoMapa ? (autoMapa[key] || (i === 0 ? autoMapa['_single'] : null)) : null;
+ // Fichas antigas podiam ter ficado com chaves desalinhadas do nome do dente (ex: 'Zona 1').
+ // Nesse caso a posição é equivalente, desde que o número de entradas corresponda ao de linhas.
+ if (!daFicha && autoLista && autoLista.length === rows.length && autoLista[i]) daFicha = autoLista[i];
+ const doMesmoDente = savedPorLinha[row.id];
+ const savedVals = daFicha || doMesmoDente || saved[key] || (i === 0 ? (saved['_single'] || {}) : {});
+ container.appendChild(buildFaseRow(faseKey, denteId, labels[faseKey], notesLabels[faseKey], placeholders[faseKey], savedVals, key, row.id));
  });
  });
+ _faseValoresAutoritativos = null; // consumidos neste render
  }
 
- function buildFaseRow(faseKey, denteId, dateLabel, notesLabel, placeholder, savedVals, denteKey) {
+ function buildFaseRow(faseKey, denteId, dateLabel, notesLabel, placeholder, savedVals, denteKey, rowId) {
   const dk = denteKey || '_single';
   const div = document.createElement('div');
   div.className = 'dente-fase-row fase-dente-entry';
   div.dataset.denteKey = dk; div.dataset.denteId = denteId || '';
+  div.dataset.rowId = rowId || '';
   if (denteId) {
    const lbl = document.createElement('div'); lbl.className = 'dente-label';
    lbl.innerHTML = '<span>&#129463;</span> Dente / Zona: <strong></strong>';
@@ -993,34 +1067,60 @@
  return result;
  }
 
+ // Prepara os valores das fases de uma ficha para o próximo render. Antes, esta função
+ // escrevia diretamente nas entradas que estivessem no DOM — mas o render das fases é
+ // adiado para o frame seguinte (requestAnimationFrame), pelo que as chaves ainda eram
+ // as do estado ANTERIOR (tipicamente 'Zona 1'). Resultado: ao reabrir uma ficha para
+ // edição, as notas das fases apareciam vazias e, ao gravar, eram APAGADAS do registo
+ // clínico. Passar por um mapa autoritativo elimina essa dependência de temporização.
  function restoreFaseContainers(ficha) {
- ['cir', 'reab', 'prost'].forEach(faseKey => {
- const container = document.getElementById('faseContainer_' + faseKey);
- if (!container) return;
- const entries = container.querySelectorAll('.fase-dente-entry');
- const perDenteData = ficha['perDente_' + faseKey];
- 
- if (perDenteData && perDenteData.length > 0) {
- const lookup = {};
- perDenteData.forEach(e => { lookup[e.denteKey] = e; });
- entries.forEach(el => {
- const e = lookup[el.dataset.denteKey] || lookup['_single'] || {};
- if (e.date) el.querySelector('.fase-date').value = e.date;
- if (e.notes) el.querySelector('.fase-notes').value = e.notes;
+ _faseValoresAutoritativos = {};
+ ['cir', 'reab', 'prost'].forEach(function(faseKey) {
+ const mapa = {};
+ const lista = [];
+ ((ficha && ficha['perDente_' + faseKey]) || []).forEach(function(e) {
+  if (!e) return;
+  const valor = { date: e.date || '', notes: e.notes || '' };
+  lista.push(valor);
+  const chave = e.denteKey || e.denteId;
+  if (chave) mapa[chave] = valor;
  });
+ _faseValoresAutoritativos[faseKey] = { mapa: mapa, lista: lista };
+ });
+ renderFaseContainers();
  }
- });
+
+ function aoMudarNomeDente(input) {
+ const row = input.closest ? input.closest('.dente-row') : null;
+ const antigo = (row && row.dataset.denteChave) || '';
+ const novo = input.value.trim();
+ if (row && antigo && antigo !== novo) {
+  document.querySelectorAll('.fase-dente-entry').forEach(el => {
+   if (el.dataset.denteKey === antigo) { el.dataset.denteKey = novo; el.dataset.denteId = novo; }
+  });
+ }
+ if (row) row.dataset.denteChave = novo;
+ // Se a ficha tiver acabado de ser aberta, as chaves ainda podem estar por aplicar.
+ if (_faseValoresAutoritativos && antigo && antigo !== novo) {
+  Object.keys(_faseValoresAutoritativos).forEach(function(fk) {
+   const m = _faseValoresAutoritativos[fk];
+   if (m && m[antigo]) { m[novo] = m[antigo]; delete m[antigo]; }
+  });
+ }
+ renderFaseContainers();
  }
 
  function addDenteRow(dados = null) {
  denteCounter++; const container = document.getElementById('dentesContainer');
  const idFila = `dente_row_${denteCounter}`;
  
- // O oninput="renderFaseContainers()" garante que a etiqueta muda ao vivo
+ // O onchange="aoMudarNomeDente(this)" garante que a etiqueta muda ao vivo e que as
+ // notas das fases acompanham o novo nome. O valor é escapado: um nome com aspas
+ // partia o formulário ao reabrir a ficha.
  const rowHTML = `
  <div class="dente-row" id="${idFila}">
  <div class="form-row-four">
- <div><label>Dente / Zona</label><input type="text" class="dente-id" value="${dados ? dados.dente : ''}" onchange="renderFaseContainers()" required></div>
+ <div><label>Dente / Zona</label><input type="text" class="dente-id" value="${dados ? escapeHTML(dados.dente) : ''}" onchange="aoMudarNomeDente(this)" required></div>
  <div><label>Torque (Ncm)</label><input type="number" class="dente-torque" placeholder="Ex: 35"></div>
  <div style="grid-column: span 2;"><label>Estado Atual</label>
  <select class="dente-estado" onchange="atualizarTodosAvisosStockForm()">
@@ -1046,6 +1146,9 @@
  <div class="aviso-stock"></div>
  </div>`;
  container.appendChild(document.createRange().createContextualFragment(rowHTML));
+
+ const _rowEl = document.getElementById(idFila);
+ if (_rowEl) _rowEl.dataset.denteChave = (dados && dados.dente ? String(dados.dente).trim() : '');
 
  if(dados) {
  const f = document.getElementById(idFila);
@@ -1150,7 +1253,31 @@
   if (pDate && pBirth && new Date(pDate) < new Date(pBirth)) { showToast("A data de abertura não pode ser anterior à data de nascimento.", "error"); return; }
 
  const editIndex = parseInt(document.getElementById('editIndex').value);
+
+ // Sincroniza já as fases (o render normal é adiado para o frame seguinte, o que podia
+ // gravar chaves desatualizadas — ex: 'Zona 1' — quando o nome do dente acabara de mudar).
+ _renderFaseContainersInner();
+
  const listaDentes = getDentesFormValues();
+
+ // Linhas com peças/torque/estado preenchidos mas SEM identificação do Dente/Zona eram
+ // silenciosamente descartadas ao gravar (a linha desaparecia e o stock não era abatido).
+ // Agora é um erro explícito. Linhas totalmente vazias continuam a poder ser ignoradas.
+ const linhasIncompletas = Array.from(document.querySelectorAll('.dente-row')).filter(r => {
+  if (r.querySelector('.dente-id').value.trim()) return false;
+  let outros = []; try { outros = JSON.parse(r.querySelector('.dente-outros-data').value || '[]'); } catch(e) { outros = []; }
+  return !!(r.querySelector('.dente-implante').value.trim()
+   || r.querySelector('.dente-pilar').value.trim()
+   || outros.length
+   || r.querySelector('.dente-torque').value.trim()
+   || r.querySelector('.dente-estado').value !== 'Planeamento');
+ });
+ if (linhasIncompletas.length > 0) {
+  showToast('Há linhas com peças preenchidas mas sem Dente/Zona identificado. Preencha a identificação (ex: 16) ou remova a linha.', 'error');
+  const campo = linhasIncompletas[0].querySelector('.dente-id');
+  if (campo) { campo.focus(); campo.scrollIntoView({ block: 'center' }); }
+  return;
+ }
 
  // Dentes/Zonas duplicados partilhariam a mesma chave nas fases — bloquear
  const nomesDentes = listaDentes.map(d => d.dente.toUpperCase());
@@ -1199,12 +1326,13 @@
  if(d.implante) CurrentStock[d.implante]--; 
  if(d.pilar) CurrentStock[d.pilar]--; 
  (d.outros || []).forEach(p => CurrentStock[p]--);
-     if(d.implante && CurrentStock[d.implante] <= 2) avisos.push(d.implante);
-     if(d.pilar && CurrentStock[d.pilar] <= 2) avisos.push(d.pilar);
-     (d.outros || []).forEach(p => { if(CurrentStock[p] <= 2) avisos.push(p); });
+     if(d.implante && CurrentStock[d.implante] <= STOCK_LIMITE_CRITICO) avisos.push(d.implante);
+     if(d.pilar && CurrentStock[d.pilar] <= STOCK_LIMITE_CRITICO) avisos.push(d.pilar);
+     (d.outros || []).forEach(p => { if(CurrentStock[p] <= STOCK_LIMITE_CRITICO) avisos.push(p); });
  });
+ avisos = Array.from(new Set(avisos));
  if(avisos.length > 0) showToast(`Aviso: stock crítico para ${avisos.join(', ')}.`, "warning");
- localStorage.setItem('galimplant_stock_v3', JSON.stringify(CurrentStock));
+ persistir('galimplant_stock_v3', JSON.stringify(CurrentStock));
  renderStockTable();
  } else {
  // EDIÇÃO: a reconciliação de stock corre SEMPRE — mesmo com as peças bloqueadas —
@@ -1255,7 +1383,7 @@
  }
 
  CurrentStock = stockSimulado;
- localStorage.setItem('galimplant_stock_v3', JSON.stringify(CurrentStock));
+ persistir('galimplant_stock_v3', JSON.stringify(CurrentStock));
  renderStockTable();
  if (Object.keys(devolver).length || Object.keys(abater).length) {
  showToast(`Stock ajustado automaticamente (peças abatidas/devolvidas).`, "success");
@@ -1285,7 +1413,7 @@
  SurgeriesLog[editIndex] = Object.assign(SurgeriesLog[editIndex], dadosFicha);
  }
  
- localStorage.setItem('galimplant_surgeries_v3', JSON.stringify(SurgeriesLog));
+ persistir('galimplant_surgeries_v3', JSON.stringify(SurgeriesLog));
  hasUnsavedChanges = false;
  pecasBloqueadas = false;
  forceCancelEditing(); updateDashboard(); filterHistoryAndRender();
@@ -1318,10 +1446,10 @@
  if (d.pilar && Catalogo[d.pilar] !== undefined) CurrentStock[d.pilar]++;
  getOutrosArray(d).forEach(p => { if (Catalogo[p] !== undefined) CurrentStock[p]++; });
  });
- localStorage.setItem('galimplant_stock_v3', JSON.stringify(CurrentStock)); renderStockTable();
+ persistir('galimplant_stock_v3', JSON.stringify(CurrentStock)); renderStockTable();
  }
  SurgeriesLog.splice(index, 1);
- localStorage.setItem('galimplant_surgeries_v3', JSON.stringify(SurgeriesLog));
+ persistir('galimplant_surgeries_v3', JSON.stringify(SurgeriesLog));
  showToast("Ficha eliminada."); updateDashboard(); filterHistoryAndRender();
  scheduleGDriveAutoSync();
  }, "Aviso Irreversível");
@@ -1336,11 +1464,11 @@
  function adicionarAoCatalogo() {
  const ref = document.getElementById('novaRef').value.trim(); const desc = document.getElementById('novaDesc').value.trim();
  if(!ref || !desc) { showToast("Preencha Referência e Descrição.", "error"); return; }
- if(!/^[A-Za-z0-9 ._\/-]+$/.test(ref)) { showToast("A referência só pode conter letras, números, espaços e . _ / -", "error"); return; }
+ if(!REF_CATALOGO_RE.test(ref)) { showToast("A referência só pode conter letras, números, espaços e . _ / -", "error"); return; }
   if(Catalogo[ref]) { showToast("Referência \"" + ref + "\" já existe no catálogo.", "warning"); return; }
  Catalogo[ref] = desc; if(CurrentStock[ref] === undefined) CurrentStock[ref] = 0;
- localStorage.setItem('galimplant_catalog_v1', JSON.stringify(Catalogo));
- localStorage.setItem('galimplant_stock_v3', JSON.stringify(CurrentStock));
+ persistir('galimplant_catalog_v1', JSON.stringify(Catalogo));
+ persistir('galimplant_stock_v3', JSON.stringify(CurrentStock));
  document.getElementById('novaRef').value = ''; document.getElementById('novaDesc').value = '';
  populateDatalist(); renderStockTable(); renderCatalogManager(); showToast(`Referência adicionada.`, "success"); scheduleGDriveAutoSync();
  }
@@ -1352,9 +1480,9 @@
  const isDefault = catalogoPreDefinido[ref] !== undefined;
  if (catalogEditingRef === ref) {
  const safeId = ref.replace(/[^a-zA-Z0-9]/g,'_');
- const descVal = (Catalogo[ref]||'').replace(/"/g,'&quot;');
+ const descVal = escapeHTML(Catalogo[ref]||'');
  tbody.insertAdjacentHTML('beforeend',`<tr>
- <td><input type="text" id="editRef_${safeId}" value="${ref}" style="width:100%;box-sizing:border-box;"></td>
+ <td><input type="text" id="editRef_${safeId}" value="${escapeHTML(ref)}" style="width:100%;box-sizing:border-box;"></td>
  <td><input type="text" id="editDesc_${safeId}" value="${descVal}" style="width:100%;box-sizing:border-box;"></td>
  <td style="white-space:nowrap;"><button class="btn btn-small btn-success" onclick="saveEditCatalogo('${ref}')">Guardar</button> <button class="btn btn-small" onclick="cancelEditCatalogo()">Cancelar</button></td>
  </tr>`);
@@ -1376,7 +1504,7 @@
  const newRef = document.getElementById('editRef_'+safeId).value.trim();
  const newDesc = document.getElementById('editDesc_'+safeId).value.trim();
  if (!newRef || !newDesc) { showToast("Preencha Referência e Descrição.", "error"); return; }
- if (!/^[A-Za-z0-9 ._\/-]+$/.test(newRef)) { showToast("A referência só pode conter letras, números, espaços e . _ / -", "error"); return; }
+ if (!REF_CATALOGO_RE.test(newRef)) { showToast("A referência só pode conter letras, números, espaços e . _ / -", "error"); return; }
  if (newRef !== origRef && Catalogo[newRef] !== undefined) { showToast(`A referência "${newRef}" já existe.`, "warning"); return; }
 
  const isDefault = catalogoPreDefinido[origRef] !== undefined;
@@ -1386,20 +1514,20 @@
  Catalogo[origRef] = newDesc;
  if (isDefault) {
  CatalogDescOverrides[origRef] = newDesc;
- localStorage.setItem('galimplant_catalog_descoverrides_v1', JSON.stringify(CatalogDescOverrides));
+ persistir('galimplant_catalog_descoverrides_v1', JSON.stringify(CatalogDescOverrides));
  }
  } else {
  delete Catalogo[origRef];
  Catalogo[newRef] = newDesc;
- if (stockVal !== undefined) { delete CurrentStock[origRef]; CurrentStock[newRef] = stockVal; localStorage.setItem('galimplant_stock_v3', JSON.stringify(CurrentStock)); }
+ if (stockVal !== undefined) { delete CurrentStock[origRef]; CurrentStock[newRef] = stockVal; persistir('galimplant_stock_v3', JSON.stringify(CurrentStock)); }
  if (isDefault) {
  if (!CatalogHiddenDefaults.includes(origRef)) CatalogHiddenDefaults.push(origRef);
- localStorage.setItem('galimplant_catalog_hidden_v1', JSON.stringify(CatalogHiddenDefaults));
- if (CatalogDescOverrides[origRef]) { delete CatalogDescOverrides[origRef]; localStorage.setItem('galimplant_catalog_descoverrides_v1', JSON.stringify(CatalogDescOverrides)); }
+ persistir('galimplant_catalog_hidden_v1', JSON.stringify(CatalogHiddenDefaults));
+ if (CatalogDescOverrides[origRef]) { delete CatalogDescOverrides[origRef]; persistir('galimplant_catalog_descoverrides_v1', JSON.stringify(CatalogDescOverrides)); }
  }
  }
 
- localStorage.setItem('galimplant_catalog_v1', JSON.stringify(Catalogo));
+ persistir('galimplant_catalog_v1', JSON.stringify(Catalogo));
  catalogEditingRef = null;
  populateDatalist(); renderStockTable(); renderCatalogManager();
  showToast("Referência atualizada.", "success"); scheduleGDriveAutoSync();
@@ -1409,24 +1537,55 @@
  if ((CurrentStock[ref] || 0) > 0) { showToast("Não pode apagar uma referência que tem peças em stock.", "warning"); return; }
  showConfirm(`Apagar a referência "${ref}" do catálogo?`, () => {
  delete Catalogo[ref]; delete CurrentStock[ref];
- localStorage.setItem('galimplant_catalog_v1', JSON.stringify(Catalogo));
- localStorage.setItem('galimplant_stock_v3', JSON.stringify(CurrentStock));
+ persistir('galimplant_catalog_v1', JSON.stringify(Catalogo));
+ persistir('galimplant_stock_v3', JSON.stringify(CurrentStock));
  renderStockTable(); renderCatalogManager(); populateDatalist();
  showToast("Referência removida."); scheduleGDriveAutoSync();
  });
  }
 
+ // Limiar a partir do qual uma peça é considerada crítica.
+ // (Fase 2 do plano: passa a ser configurável por referência, com ponto de encomenda próprio.)
+ const STOCK_LIMITE_CRITICO = 2;
+ function stockStatusBadge(qtd) {
+ return qtd === 0 ? '<span class="badge badge-danger">S/ Stock</span>'
+  : (qtd <= STOCK_LIMITE_CRITICO ? '<span class="badge badge-warning">Crítico</span>' : '<span class="badge badge-success">OK</span>');
+ }
+ function stockInputId(ref) { return 'input_st_' + ref.replace(/[^a-zA-Z0-9]/g,'_'); }
+
  function renderStockTable() {
  const tbody = document.getElementById('stockTableBody'); tbody.innerHTML = '';
  Object.keys(Catalogo).forEach(ref => {
  const qtd = CurrentStock[ref] || 0;
- let status = qtd === 0 ? '<span class="badge badge-danger">S/ Stock</span>' : (qtd <= 2 ? '<span class="badge badge-warning">Crítico</span>' : '<span class="badge badge-success">OK</span>');
  const refJs = ref.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
- tbody.insertAdjacentHTML('beforeend', `<tr class="item-row"><td><strong>${escapeHTML(ref)}</strong></td><td>${escapeHTML(Catalogo[ref])}</td><td><input type="number" class="stock-input" id="input_st_${ref.replace(/[^a-zA-Z0-9]/g,'_')}" value="${qtd}" min="0" onchange="updateSingleStock('${refJs}', this.value)"></td><td>${status}</td></tr>`);
+ tbody.insertAdjacentHTML('beforeend', `<tr class="item-row"><td><strong>${escapeHTML(ref)}</strong></td><td>${escapeHTML(Catalogo[ref])}</td><td><input type="number" class="stock-input" id="${stockInputId(ref)}" value="${qtd}" min="0" onchange="updateSingleStock('${refJs}', this.value)"></td><td class="stock-estado">${stockStatusBadge(qtd)}</td></tr>`);
  });
+ // A tabela foi reconstruída: volta a aplicar o filtro que estiver na caixa de pesquisa,
+ // caso contrário o filtro visual desaparecia mantendo o texto na caixa.
+ const caixa = document.getElementById('searchStock');
+ if (caixa && caixa.value) filterStockTable();
  }
- function updateSingleStock(ref, val) { CurrentStock[ref] = parseInt(val) || 0; localStorage.setItem('galimplant_stock_v3', JSON.stringify(CurrentStock)); renderStockTable(); updateDashboard(); scheduleGDriveAutoSync(); }
- function saveStockToStorage() { Object.keys(Catalogo).forEach(ref => { const _e3=document.getElementById('input_st_'+ref.replace(/[^a-zA-Z0-9]/g,'_')); CurrentStock[ref]=_e3?(parseInt(_e3.value)||0):(CurrentStock[ref]||0); }); localStorage.setItem('galimplant_stock_v3', JSON.stringify(CurrentStock)); renderStockTable(); showToast("Stock atualizado."); updateDashboard(); scheduleGDriveAutoSync(); }
+
+ // O stock é um contador de peças: nunca negativo, nunca fracionário.
+ function parseStockValor(val) { const n = parseInt(val, 10); return (!isFinite(n) || n < 0) ? 0 : n; }
+
+ function updateSingleStock(ref, val) {
+ const bruto = parseInt(val, 10);
+ if (isFinite(bruto) && bruto < 0) showToast('O stock não pode ser negativo. Valor corrigido para 0.', 'warning');
+ CurrentStock[ref] = parseStockValor(val);
+ persistir('galimplant_stock_v3', JSON.stringify(CurrentStock));
+ // Atualiza só a linha em causa: re-renderizar a tabela inteira fazia perder o filtro
+ // ativo e o foco do campo que o utilizador acabou de editar.
+ const input = document.getElementById(stockInputId(ref));
+ const row = input && input.closest ? input.closest('.item-row') : null;
+ if (row) {
+  const celula = row.querySelector('.stock-estado');
+  if (celula) celula.innerHTML = stockStatusBadge(CurrentStock[ref]);
+  if (input) input.value = CurrentStock[ref];
+ } else { renderStockTable(); }
+ updateDashboard(); scheduleGDriveAutoSync();
+ }
+ function saveStockToStorage() { Object.keys(Catalogo).forEach(ref => { const _e3=document.getElementById(stockInputId(ref)); CurrentStock[ref]=_e3?parseStockValor(_e3.value):(CurrentStock[ref]||0); }); persistir('galimplant_stock_v3', JSON.stringify(CurrentStock)); renderStockTable(); showToast("Stock atualizado."); updateDashboard(); scheduleGDriveAutoSync(); }
  function checkStockAlert(ref) {
   if (!ref || Catalogo[ref] === undefined) return;
   const disp = CurrentStock[ref] || 0;
@@ -1869,8 +2028,25 @@
 
  function updateDashboard() {
  document.getElementById('dashTotalFichas').innerText = SurgeriesLog.length;
- let alertas = 0; Object.keys(Catalogo).forEach(r => { if((CurrentStock[r]||0)<=2) alertas++; });
- document.getElementById('dashStock').innerText = alertas;
+
+ // "Em rutura" = peças que a clínica realmente usa (referenciadas em alguma ficha) e que
+ // estão a 0. Contar as 316 referências do catálogo dava um número permanentemente alto
+ // (a maioria nunca é usada) e sem significado prático.
+ const refsUsadas = new Set();
+ (SurgeriesLog || []).forEach(f => (f.dentesTratados || []).forEach(d => {
+  [d.implante, d.pilar].concat(getOutrosArray(d)).filter(Boolean).forEach(p => refsUsadas.add(p));
+ }));
+ const emRutura = Array.from(refsUsadas).filter(r => (CurrentStock[r] || 0) === 0).sort();
+ const elStock = document.getElementById('dashStock');
+ elStock.innerText = emRutura.length;
+ elStock.style.cursor = emRutura.length ? 'pointer' : 'default';
+ elStock.title = emRutura.length ? 'Clique para ver as peças esgotadas' : '';
+ elStock.onclick = emRutura.length ? function() {
+  showConfirm('Peças já usadas em fichas que estão esgotadas (stock 0):\n\n'
+   + emRutura.map(r => r + ' — ' + (Catalogo[r] || '(fora do catálogo)')).join('\n'),
+   function(){}, 'Peças Esgotadas', true);
+ } : null;
+
  
  // Comparação só por data (meia-noite local) para que consultas marcadas
  // para HOJE contem como urgentes (new Date('yyyy-mm-dd') é meia-noite UTC).
@@ -2006,7 +2182,7 @@
  cronogramaHTML += `<h5 style="margin-bottom:5px; margin-top:15px;">${nomes[fase]}</h5><ul style="margin-top:0;">`;
  c['perDente_'+fase].forEach(e => {
  if(e.date || e.notes) {
- cronogramaHTML += `<li><b>Dente ${e.denteId || '-'}:</b> ${formatDate(e.date)} - ${e.notes || 'Sem notas extras'}</li>`;
+ cronogramaHTML += `<li><b>Dente ${escapeHTML(e.denteId || '-')}:</b> ${formatDate(e.date)} - ${escapeHTML(e.notes || 'Sem notas extras')}</li>`;
  }
  });
  cronogramaHTML += `</ul>`;
@@ -2050,6 +2226,40 @@
  setTimeout(() => { printWindow.print(); }, 200);
  }
 
+ // Corpo do reset, numa função própria: é chamado na sequência normal (quando o backup
+ // de segurança corre bem) ou depois de o utilizador confirmar explicitamente que quer
+ // avançar SEM qualquer cópia de segurança.
+ function executarReset() {
+  localStorage.removeItem('galimplant_stock_v3');
+  localStorage.removeItem('galimplant_surgeries_v3');
+  localStorage.removeItem('galimplant_catalog_v1');
+  localStorage.removeItem('galimplant_catalog_descoverrides_v1');
+  localStorage.removeItem('galimplant_catalog_hidden_v1');
+  localStorage.removeItem('galimplant_last_backup');
+  CatalogDescOverrides = {}; CatalogHiddenDefaults = []; catalogEditingRef = null;
+  Catalogo = Object.assign({}, catalogoPreDefinido);
+  CurrentStock = {};
+  Object.keys(Catalogo).forEach(function(k) { CurrentStock[k] = 0; });
+  SurgeriesLog = [];
+  persistir('galimplant_stock_v3', JSON.stringify(CurrentStock));
+  persistir('galimplant_surgeries_v3', JSON.stringify(SurgeriesLog));
+  persistir('galimplant_catalog_v1', JSON.stringify(Catalogo));
+  populateDatalist(); renderStockTable(); renderCatalogManager();
+  filterHistoryAndRender(); updateDashboard(); checkBackupStatus();
+  hasUnsavedChanges = false; forceCancelEditing();
+  // Proteção: desliga a sincronização automática após o reset, para que os dados
+  // vazios deste dispositivo NUNCA sobreponham silenciosamente a cópia na nuvem.
+  // O utilizador tem de decidir ativamente: transferir da nuvem para recuperar,
+  // ou voltar a ligar a sincronização automática depois de confirmar o estado.
+  if (gdriveConnected) {
+  persistir('galimplant_gdrive_autosync', 'false');
+  const chk = document.getElementById('gdriveAutoSync'); if (chk) chk.checked = false;
+  showToast('✓ Reset completo. A sincronização automática foi desligada por segurança — use "Transferir da nuvem" para recuperar os dados, ou volte a ligá-la manualmente.', 'success');
+  } else {
+  showToast('✓ Reset completo. Aplicação reiniciada com catálogo de fábrica (285 referências).', 'success');
+  }
+ }
+
  function resetCompleto() {
   showConfirm(
    'ATENCAO: Esta acao vai apagar PERMANENTEMENTE:\n\n' +
@@ -2059,37 +2269,21 @@
    'Será feito um backup automático antes de apagar. Após o reset, a aplicação recomeça com o catálogo de fábrica e stock a zero.\n\n' +
    'Confirma que quer continuar?',
    async function() {
-    // Backup de segurança automático, antes de qualquer apagamento — mesmo que
-    // o utilizador não tenha feito backup manual recentemente.
-    try { await exportBackup(); } catch (e) { /* mesmo que falhe, o reset segue-se com confirmação já dada */ }
-    localStorage.removeItem('galimplant_stock_v3');
-    localStorage.removeItem('galimplant_surgeries_v3');
-    localStorage.removeItem('galimplant_catalog_v1');
-    localStorage.removeItem('galimplant_catalog_descoverrides_v1');
-    localStorage.removeItem('galimplant_catalog_hidden_v1');
-    localStorage.removeItem('galimplant_last_backup');
-    CatalogDescOverrides = {}; CatalogHiddenDefaults = []; catalogEditingRef = null;
-    Catalogo = Object.assign({}, catalogoPreDefinido);
-    CurrentStock = {};
-    Object.keys(Catalogo).forEach(function(k) { CurrentStock[k] = 0; });
-    SurgeriesLog = [];
-    localStorage.setItem('galimplant_stock_v3', JSON.stringify(CurrentStock));
-    localStorage.setItem('galimplant_surgeries_v3', JSON.stringify(SurgeriesLog));
-    localStorage.setItem('galimplant_catalog_v1', JSON.stringify(Catalogo));
-    populateDatalist(); renderStockTable(); renderCatalogManager();
-    filterHistoryAndRender(); updateDashboard(); checkBackupStatus();
-    hasUnsavedChanges = false; forceCancelEditing();
-    // Proteção: desliga a sincronização automática após o reset, para que os dados
-    // vazios deste dispositivo NUNCA sobreponham silenciosamente a cópia na nuvem.
-    // O utilizador tem de decidir ativamente: transferir da nuvem para recuperar,
-    // ou voltar a ligar a sincronização automática depois de confirmar o estado.
-    if (gdriveConnected) {
-    localStorage.setItem('galimplant_gdrive_autosync', 'false');
-    const chk = document.getElementById('gdriveAutoSync'); if (chk) chk.checked = false;
-    showToast('✓ Reset completo. A sincronização automática foi desligada por segurança — use "Transferir da nuvem" para recuperar os dados, ou volte a ligá-la manualmente.', 'success');
-    } else {
-    showToast('✓ Reset completo. Aplicação reiniciada com catálogo de fábrica (285 referências).', 'success');
+    // Backup de segurança automático, antes de qualquer apagamento. Se não for possível
+    // criá-lo, o apagamento NÃO avança sozinho: exige uma segunda confirmação explícita.
+    let backupOk = false;
+    try { backupOk = await exportBackup(); } catch (e) { backupOk = false; }
+    if (!backupOk) {
+     showConfirm(
+      'Não foi possível criar o backup de segurança (exportação cancelada ou bloqueada pelo browser).\n\n' +
+      'Se continuar, TODOS os dados serão apagados SEM qualquer cópia de segurança.\n\n' +
+      'Recomendado: cancele e repita o reset autorizando a transferência do ficheiro.',
+      executarReset,
+      '⚠️ Reset Sem Backup'
+     );
+     return;
     }
+    executarReset();
    },
    '⚠️ Reset Completo — Confirmação'
   );
@@ -2099,30 +2293,59 @@
  return { stock: CurrentStock, historico: SurgeriesLog, catalogo: Catalogo, catalogoDescOverrides: CatalogDescOverrides, catalogoHiddenDefaults: CatalogHiddenDefaults };
  }
 
+ // Encriptação do backup exportado para ficheiro. Desligada por omissão para não
+ // quebrar o fluxo habitual, mas recomendada: o ficheiro contém nomes, datas de
+ // nascimento e riscos clínicos (categoria especial de dados no RGPD).
+ function exportEncryptEnabled() { return localStorage.getItem('galimplant_export_encrypt') === 'true'; }
+ function setExportEncrypt(checked) {
+  if (checked && !chaveEncriptacao) {
+   if (!pedirChaveEncriptacao()) { document.getElementById('exportEncrypt').checked = false; return; }
+  }
+  persistir('galimplant_export_encrypt', checked ? 'true' : 'false');
+  showToast(checked ? 'O próximo backup exportado será encriptado.' : 'Backup exportado volta a ser texto simples.');
+ }
+
+ // Devolve true se o backup foi efetivamente criado; false se o utilizador cancelou
+ // ou o browser bloqueou. O reset completo usa este valor para não apagar dados sem cópia.
  async function exportBackup() {
- const jsonStr = JSON.stringify(buildBackupObject());
- const dataH = new Date(); const dFormat = `${dataH.getFullYear()}-${(dataH.getMonth()+1).toString().padStart(2,'0')}-${dataH.getDate().toString().padStart(2,'0')}_${dataH.getHours().toString().padStart(2,'0')}h${dataH.getMinutes().toString().padStart(2,'0')}`;
- // Nota: usa-se .txt em vez de .json porque o Web Share API do Chromium/Android
- // só permite partilhar ficheiros com extensões numa lista fixa (imagens, áudio, vídeo, texto),
- // e .json não está incluído. O conteúdo continua a ser JSON válido, só muda a extensão.
-  const fileName = `backup_galimplant_${dFormat}.txt`;
- const file = new File([jsonStr], fileName, { type: "text/plain" });
+  let jsonStr = JSON.stringify(buildBackupObject());
+  const dataH = new Date(); const dFormat = `${dataH.getFullYear()}-${(dataH.getMonth()+1).toString().padStart(2,'0')}-${dataH.getDate().toString().padStart(2,'0')}_${dataH.getHours().toString().padStart(2,'0')}h${dataH.getMinutes().toString().padStart(2,'0')}`;
+  // Nota: usa-se .txt em vez de .json porque o Web Share API do Chromium/Android
+  // só permite partilhar ficheiros com extensões numa lista fixa (imagens, áudio, vídeo, texto),
+  // e .json não está incluído. O conteúdo continua a ser JSON válido, só muda a extensão.
+  let fileName = `backup_galimplant_${dFormat}.txt`;
 
- // O picker de partilha nativo do Windows tem um bug conhecido que falha a
- // enumerar apps de partilha, por isso no Windows vai-se sempre direto ao download.
- const isWindows = navigator.userAgentData ? navigator.userAgentData.platform === "Windows" : /Windows/i.test(navigator.userAgent);
+  if (exportEncryptEnabled()) {
+   if (!chaveEncriptacao && !pedirChaveEncriptacao()) {
+    showToast('Backup cancelado: sem palavra-passe não é possível encriptar. Nada foi exportado.', 'warning');
+    return false;
+   }
+   try {
+    jsonStr = await gdriveEncryptText(jsonStr, chaveEncriptacao);
+    fileName = `backup_galimplant_${dFormat}_encriptado.txt`;
+   } catch (e) {
+    showToast('Falha ao encriptar o backup. Nada foi exportado.', 'error');
+    return false;
+   }
+  }
 
- if (!isWindows && navigator.canShare && navigator.canShare({ files: [file] })) {
-  try {
-   const shareTimeout = new Promise((_, reject) => setTimeout(() => reject(new Error('share_timeout')), 4000));
-   await Promise.race([
-    navigator.share({ files: [file], title: "Backup Galimplant", text: "Backup de dados Galimplant" }),
-    shareTimeout
-   ]);
-   localStorage.setItem('galimplant_last_backup', new Date().toISOString()); checkBackupStatus(); showToast("Backup partilhado.");
-   return;
-  } catch (e) {
-   if (e && e.name === 'AbortError') { return; }
+  const file = new File([jsonStr], fileName, { type: "text/plain" });
+
+  // O picker de partilha nativo do Windows tem um bug conhecido que falha a
+  // enumerar apps de partilha, por isso no Windows vai-se sempre direto ao download.
+  const isWindows = navigator.userAgentData ? navigator.userAgentData.platform === "Windows" : /Windows/i.test(navigator.userAgent);
+
+  if (!isWindows && navigator.canShare && navigator.canShare({ files: [file] })) {
+   try {
+    const shareTimeout = new Promise((_, reject) => setTimeout(() => reject(new Error('share_timeout')), 4000));
+    await Promise.race([
+     navigator.share({ files: [file], title: "Backup Galimplant", text: "Backup de dados Galimplant" }),
+     shareTimeout
+    ]);
+    persistir('galimplant_last_backup', new Date().toISOString()); checkBackupStatus(); showToast("Backup partilhado.");
+    return true;
+   } catch (e) {
+    if (e && e.name === 'AbortError') { return false; }
    // se for timeout ou outro erro (ex: falha do picker de partilha do Windows), segue para o download
   }
  }
@@ -2131,7 +2354,8 @@
  const a = document.createElement('a'); a.href = blobUrl;
  a.download = fileName; document.body.appendChild(a); a.click(); a.remove();
  setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
- localStorage.setItem('galimplant_last_backup', new Date().toISOString()); checkBackupStatus(); showToast("Backup transferido.");
+ persistir('galimplant_last_backup', new Date().toISOString()); checkBackupStatus(); showToast("Backup transferido.");
+ return true;
  }
 
  // Valida a estrutura de um backup importado, campo a campo, antes de o aplicar.
@@ -2168,16 +2392,21 @@
    if (typeof dados.catalogo !== 'object' || Array.isArray(dados.catalogo)) return { ok:false, erro:'Campo "catalogo" inválido.' };
    for (const ref of Object.keys(dados.catalogo)) {
     if (typeof dados.catalogo[ref] !== 'string') return { ok:false, erro:`Descrição inválida no catálogo para a referência "${ref}".` };
+    if (!REF_CATALOGO_RE.test(ref)) return { ok:false, erro:`Referência de catálogo inválida: "${ref}". Só são permitidas letras, números, espaços e . _ / -` };
    }
   }
   if (dados.catalogoDescOverrides !== undefined) {
    if (typeof dados.catalogoDescOverrides !== 'object' || Array.isArray(dados.catalogoDescOverrides)) return { ok:false, erro:'Campo "catalogoDescOverrides" inválido.' };
    for (const ref of Object.keys(dados.catalogoDescOverrides)) {
     if (typeof dados.catalogoDescOverrides[ref] !== 'string') return { ok:false, erro:`Correção de descrição inválida para "${ref}".` };
+    if (!REF_CATALOGO_RE.test(ref)) return { ok:false, erro:`Referência inválida em "catalogoDescOverrides": "${ref}".` };
    }
   }
   if (dados.catalogoHiddenDefaults !== undefined) {
    if (!Array.isArray(dados.catalogoHiddenDefaults) || dados.catalogoHiddenDefaults.some(v => typeof v !== 'string')) return { ok:false, erro:'Campo "catalogoHiddenDefaults" inválido.' };
+   for (const ref of dados.catalogoHiddenDefaults) {
+    if (!REF_CATALOGO_RE.test(ref)) return { ok:false, erro:`Referência inválida em "catalogoHiddenDefaults": "${ref}".` };
+   }
   }
 
   return { ok:true };
@@ -2194,12 +2423,12 @@
   Catalogo = Object.assign({}, catalogoPreDefinido);
   Object.keys(dados.catalogo).forEach(function(k) { if (!catalogoPreDefinido[k]) Catalogo[k] = dados.catalogo[k]; });
   applyCatalogAdjustments();
-  localStorage.setItem('galimplant_catalog_v1', JSON.stringify(Catalogo));
-  localStorage.setItem('galimplant_catalog_descoverrides_v1', JSON.stringify(CatalogDescOverrides));
-  localStorage.setItem('galimplant_catalog_hidden_v1', JSON.stringify(CatalogHiddenDefaults));
+  persistir('galimplant_catalog_v1', JSON.stringify(Catalogo));
+  persistir('galimplant_catalog_descoverrides_v1', JSON.stringify(CatalogDescOverrides));
+  persistir('galimplant_catalog_hidden_v1', JSON.stringify(CatalogHiddenDefaults));
  }
- localStorage.setItem('galimplant_stock_v3', JSON.stringify(CurrentStock));
- localStorage.setItem('galimplant_surgeries_v3', JSON.stringify(SurgeriesLog));
+ persistir('galimplant_stock_v3', JSON.stringify(CurrentStock));
+ persistir('galimplant_surgeries_v3', JSON.stringify(SurgeriesLog));
  populateDatalist(); renderStockTable(); renderCatalogManager(); filterHistoryAndRender(); updateDashboard(); checkBackupStatus();
  }
 
@@ -2211,17 +2440,59 @@
  if (file.size > MAX_BACKUP_BYTES) { showToast(`Ficheiro demasiado grande (${(file.size/1024/1024).toFixed(1)} MB). Backup rejeitado.`, "error"); return; }
  showConfirm("Importar este backup vai SUBSTITUIR todos os dados atuais (fichas, stock e catálogo personalizado). Continuar?", () => {
  const reader = new FileReader();
- reader.onload = function() {
+ reader.onload = async function() {
  try {
- const dados = JSON.parse(reader.result);
- const validacao = validateBackupData(dados);
- if (!validacao.ok) { showToast(`Importação cancelada: ${validacao.erro}`, "error"); return; }
- applyImportedBackup(dados);
- showToast("Dados restaurados com sucesso!");
+  let texto = reader.result;
+  // Backups encriptados (exportados com "Encriptar backup" ou sincronizados com
+  // encriptação ativa) chegam aqui como payload AES-GCM em vez do JSON habitual.
+  if (gdriveIsEncryptedPayload(texto)) {
+   if (!chaveEncriptacao && !pedirChaveEncriptacao()) { showToast('Importação cancelada.', 'warning'); return; }
+   try { texto = await gdriveDecryptText(texto, chaveEncriptacao); }
+   catch (e) { chaveEncriptacao = null; _kdfCache = null; showToast('Palavra-passe incorreta — não foi possível desencriptar o backup.', "error"); return; }
+  }
+  const dados = JSON.parse(texto);
+  const validacao = validateBackupData(dados);
+  if (!validacao.ok) { showToast(`Importação cancelada: ${validacao.erro}`, "error"); return; }
+  applyImportedBackup(dados);
+  showToast("Dados restaurados com sucesso!");
  } catch (e) { showToast("Erro ao ler ficheiro de backup.", "error"); }
  };
  reader.readAsText(file);
  }, "Importar Backup");
+ }
+
+ /* ── Recuperação do estado guardado automaticamente antes de cada sincronização ──
+  * O gdrivePull guarda uma cópia local completa antes de substituir os dados pelos da
+  * nuvem. Até agora essa cópia era escrita e nunca podia ser recuperada — a rede de
+  * segurança existia mas não tinha porta de entrada. */
+ function atualizarBotaoPrePull() {
+  const btn = document.getElementById('btnPrePull'); if (!btn) return;
+  const bruto = localStorage.getItem('galimplant_pre_pull_backup');
+  if (!bruto) { btn.style.display = 'none'; return; }
+  const quando = localStorage.getItem('galimplant_pre_pull_backup_time');
+  let sufixo = 'antes da última sincronização';
+  if (quando) {
+   const dias = Math.floor((Date.now() - new Date(quando).getTime()) / 86400000);
+   sufixo = (dias <= 0 ? 'hoje' : 'há ' + dias + ' dia(s)') + ', antes da última sincronização';
+  }
+  btn.style.display = '';
+  btn.textContent = '↩️ Recuperar estado de ' + sufixo;
+ }
+
+ function restaurarPrePullBackup() {
+  const bruto = localStorage.getItem('galimplant_pre_pull_backup');
+  if (!bruto) { atualizarBotaoPrePull(); showToast('Não há nenhum estado anterior guardado.', 'warning'); return; }
+  let dados = null;
+  try { dados = JSON.parse(bruto); } catch (e) { dados = null; }
+  if (!dados) { showToast('O estado anterior guardado está corrompido.', 'error'); return; }
+  const validacao = validateBackupData(dados);
+  if (!validacao.ok) { showToast('Estado anterior inválido: ' + validacao.erro, 'error'); return; }
+  const nFichas = (dados.historico || []).length;
+  showConfirm(
+   `Substituir os dados atuais pelos ${nFichas} ficha(s) clínica(s) guardadas antes da última sincronização com a nuvem?\n\nOs dados atuais serão perdidos.`,
+   () => { applyImportedBackup(dados); showToast('Estado anterior à última sincronização restaurado.'); },
+   '↩️ Recuperar Estado Anterior'
+  );
  }
 
  function checkBackupStatus() {
@@ -2245,7 +2516,7 @@
  let gdriveAccessToken = null;
  let gdriveTokenExpiry = 0;
  let gdriveConnected = false;
- let gdrivePassphrase = null; // nunca persistida — só em memória, por sessão
+ let chaveEncriptacao = null; // nunca persistida — só em memória, por sessão
  let gdriveAutoSyncTimer = null;
 
  function gdriveAutoSyncEnabled() { return localStorage.getItem('galimplant_gdrive_autosync') === 'true'; }
@@ -2258,6 +2529,7 @@
  document.getElementById('gdrive-sync-btn').style.display = gdriveConnected ? '' : 'none';
  document.getElementById('gdrive-pull-btn').style.display = gdriveConnected ? '' : 'none';
  document.getElementById('gdrive-versions-btn').style.display = gdriveConnected ? '' : 'none';
+ document.getElementById('gdrive-disconnect-btn').style.display = gdriveConnected ? '' : 'none';
  document.getElementById('gdrive-setup').style.display = gdriveConnected ? 'none' : '';
  document.getElementById('gdrive-options').style.display = gdriveConnected ? '' : 'none';
  }
@@ -2270,7 +2542,7 @@
  showToast('A biblioteca do Google ainda não carregou (verifique a ligação à internet) — tente novamente em instantes.', 'error');
  return;
  }
- localStorage.setItem('galimplant_gdrive_clientid', clientId);
+ persistir('galimplant_gdrive_clientid', clientId);
  gdriveTokenClient = google.accounts.oauth2.initTokenClient({
  client_id: clientId,
  scope: GDRIVE_SCOPE,
@@ -2289,8 +2561,24 @@
  }
 
  function disconnectGDrive() {
- gdriveConnected = false; gdriveAccessToken = null; gdrivePassphrase = null;
+ gdriveConnected = false; gdriveAccessToken = null; gdriveTokenExpiry = 0;
+ chaveEncriptacao = null; // a palavra-passe só vive em memória, por sessão
+ _kdfCache = null;        // e a chave derivada é descartada com ela
  updateGDriveStatusUI('Não ligado.');
+ }
+
+ // Desligar de facto: revoga o token no Google (antes o token ficava válido até expirar,
+ // mesmo depois de "desligar") e limpa o estado local. Não apaga dados locais.
+ function desligarGDrive() {
+ showConfirm('Desligar a sincronização com o Google Drive neste dispositivo?\n\nOs dados locais NÃO são apagados. O acesso da aplicação à sua conta Google é revogado e a palavra-passe de encriptação é esquecida (terá de a introduzir novamente).', function() {
+  try {
+   if (gdriveAccessToken && typeof google !== 'undefined' && google.accounts && google.accounts.oauth2 && google.accounts.oauth2.revoke) {
+    google.accounts.oauth2.revoke(gdriveAccessToken, function() {});
+   }
+  } catch (e) { console.warn('[GDrive] Não foi possível revogar o token:', e); }
+  disconnectGDrive();
+  showToast('Sincronização desligada e acesso ao Google Drive revogado.');
+ }, 'Desligar Google Drive');
  }
 
  function ensureGDriveToken() {
@@ -2358,22 +2646,54 @@
  return bytes;
  }
 
- async function deriveGDriveKey(passphrase, saltB64) {
+ // Iterações atuais (recomendação OWASP para PBKDF2-SHA256) e as usadas pela v1 dos
+ // payloads. O número de iterações vai gravado no próprio payload, por isso os backups
+ // antigos continuam a poder ser desencriptados.
+ const PBKDF2_ITERACOES = 600000;
+ const PBKDF2_ITERACOES_LEGADO = 150000;
+ const KDF_SALT_CHAVE = 'galimplant_kdf_salt';
+ let _kdfCache = null; // { pass, saltB64, iter, key } — evita repetir 600k iterações em cada envio
+
+ // Sal por dispositivo (o sal não é secreto). Reutilizá-lo permite manter a chave derivada
+ // em memória durante a sessão, em vez de pagar o custo do PBKDF2 a cada envio.
+ function obterSaltDispositivo() {
+  let salt = localStorage.getItem(KDF_SALT_CHAVE);
+  if (!salt) {
+   salt = uint8ArrayToBase64(crypto.getRandomValues(new Uint8Array(16)));
+   persistir(KDF_SALT_CHAVE, salt);
+  }
+  return salt;
+ }
+
+ async function deriveGDriveKey(passphrase, saltB64, iteracoes) {
  const enc = new TextEncoder();
+ const iter = iteracoes || PBKDF2_ITERACOES;
+ if (_kdfCache && _kdfCache.pass === passphrase && _kdfCache.saltB64 === saltB64 && _kdfCache.iter === iter) {
+  return { key: _kdfCache.key, saltB64: saltB64 };
+ }
  const salt = saltB64 ? base64ToUint8Array(saltB64) : crypto.getRandomValues(new Uint8Array(16));
  const baseKey = await crypto.subtle.importKey('raw', enc.encode(passphrase), 'PBKDF2', false, ['deriveKey']);
- const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: 150000, hash: 'SHA-256' }, baseKey, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+ const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: iter, hash: 'SHA-256' }, baseKey, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+ if (saltB64) _kdfCache = { pass: passphrase, saltB64: saltB64, iter: iter, key: key };
  return { key, saltB64: uint8ArrayToBase64(salt) };
  }
  async function gdriveEncryptText(plainText, passphrase) {
- const { key, saltB64 } = await deriveGDriveKey(passphrase, null);
+ // O sal é o do dispositivo (ver obterSaltDispositivo), o que permite reutilizar a chave
+ // derivada. Payloads de outros dispositivos trazem o seu próprio sal e continuam a abrir.
+ const saltB64 = obterSaltDispositivo();
+ const { key } = await deriveGDriveKey(passphrase, saltB64, PBKDF2_ITERACOES);
  const iv = crypto.getRandomValues(new Uint8Array(12));
  const cipherBuf = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plainText));
- return JSON.stringify({ encrypted: true, v: 1, salt: saltB64, iv: uint8ArrayToBase64(iv), data: uint8ArrayToBase64(new Uint8Array(cipherBuf)) });
+ return JSON.stringify({ encrypted: true, v: 2, iter: PBKDF2_ITERACOES, salt: saltB64, iv: uint8ArrayToBase64(iv), data: uint8ArrayToBase64(new Uint8Array(cipherBuf)) });
  }
  async function gdriveDecryptText(payloadStr, passphrase) {
  const payload = JSON.parse(payloadStr);
- const { key } = await deriveGDriveKey(passphrase, payload.salt);
+ if (!payload || payload.encrypted !== true
+  || typeof payload.salt !== 'string' || typeof payload.iv !== 'string' || typeof payload.data !== 'string') {
+  throw new Error('payload_encriptado_invalido');
+ }
+ const iter = parseInt(payload.iter, 10) || PBKDF2_ITERACOES_LEGADO;
+ const { key } = await deriveGDriveKey(passphrase, payload.salt, iter);
  const iv = base64ToUint8Array(payload.iv);
  const data = base64ToUint8Array(payload.data);
  const plainBuf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, data);
@@ -2382,18 +2702,19 @@
  function gdriveIsEncryptedPayload(text) {
  try { const p = JSON.parse(text); return !!(p && p.encrypted === true); } catch (e) { return false; }
  }
- function promptGDrivePassphrase() {
- const pass = window.prompt('Palavra-passe de encriptação dos dados na nuvem (a mesma em todos os dispositivos):');
+ function pedirChaveEncriptacao() {
+ const pass = window.prompt('Palavra-passe de encriptação dos dados (a mesma em todos os dispositivos e em todos os backups):');
  if (!pass) return false;
- gdrivePassphrase = pass; return true;
+ if (pass.length < 8) { showToast('Use uma palavra-passe com pelo menos 8 caracteres.', 'warning'); return false; }
+ chaveEncriptacao = pass; _kdfCache = null; return true;
  }
  function toggleGDriveEncrypt(checked) {
- if (checked && !gdrivePassphrase) { if (!promptGDrivePassphrase()) { document.getElementById('gdriveEncrypt').checked = false; return; } }
- localStorage.setItem('galimplant_gdrive_encrypt', checked ? 'true' : 'false');
+ if (checked && !chaveEncriptacao) { if (!pedirChaveEncriptacao()) { document.getElementById('gdriveEncrypt').checked = false; return; } }
+ persistir('galimplant_gdrive_encrypt', checked ? 'true' : 'false');
  showToast(checked ? 'Encriptação ativada — o próximo envio já vai encriptado.' : 'Encriptação desativada.');
  }
  function setGDriveAutoSync(checked) {
- localStorage.setItem('galimplant_gdrive_autosync', checked ? 'true' : 'false');
+ persistir('galimplant_gdrive_autosync', checked ? 'true' : 'false');
  }
 
  // No primeiro "Ligar", compara com o que já existe na nuvem e sugere a ação certa.
@@ -2441,13 +2762,13 @@
  try {
  let payload = JSON.stringify(buildBackupObject());
  if (gdriveEncryptEnabled()) {
- if (!gdrivePassphrase && !promptGDrivePassphrase()) return false;
- payload = await gdriveEncryptText(payload, gdrivePassphrase);
+ if (!chaveEncriptacao && !pedirChaveEncriptacao()) return false;
+ payload = await gdriveEncryptText(payload, chaveEncriptacao);
  }
  const result = await gdriveUpload(token, fileId, payload);
  const meta = await gdriveGetMeta(token, result.id);
- localStorage.setItem('galimplant_gdrive_last_sync_time', meta.modifiedTime);
- localStorage.setItem('galimplant_gdrive_file_id', result.id);
+ persistir('galimplant_gdrive_last_sync_time', meta.modifiedTime);
+ persistir('galimplant_gdrive_file_id', result.id);
  updateGDriveStatusUI('✓ Sincronizado às ' + new Date().toLocaleTimeString('pt-PT'));
  if (!silent) showToast('Dados enviados para o Google Drive.');
  gdriveMaybePinDailySnapshot(token, result.id); // não bloqueia a UI; falhas aqui não são críticas
@@ -2545,9 +2866,9 @@
  const fileId = localStorage.getItem('galimplant_gdrive_file_id');
  let text = await gdriveDownloadRevision(token, fileId, revId);
  if (gdriveIsEncryptedPayload(text)) {
- if (!gdrivePassphrase && !promptGDrivePassphrase()) return;
- try { text = await gdriveDecryptText(text, gdrivePassphrase); }
- catch (e) { showToast('Palavra-passe incorreta — não foi possível desencriptar.', 'error'); gdrivePassphrase = null; return; }
+ if (!chaveEncriptacao && !pedirChaveEncriptacao()) return;
+ try { text = await gdriveDecryptText(text, chaveEncriptacao); }
+ catch (e) { showToast('Palavra-passe incorreta — não foi possível desencriptar.', 'error'); chaveEncriptacao = null; _kdfCache = null; return; }
  }
  const dados = JSON.parse(text);
  const validacao = validateBackupData(dados);
@@ -2570,20 +2891,21 @@
  // substituídos pelos que vêm da nuvem, sem interromper o utilizador com uma
  // folha de partilha/download (que o exportBackup() dispararia a cada sincronização).
  try {
- localStorage.setItem('galimplant_pre_pull_backup', JSON.stringify(buildBackupObject()));
- localStorage.setItem('galimplant_pre_pull_backup_time', new Date().toISOString());
+ persistir('galimplant_pre_pull_backup', JSON.stringify(buildBackupObject()));
+ persistir('galimplant_pre_pull_backup_time', new Date().toISOString());
+ atualizarBotaoPrePull(); // passa a haver forma de voltar atrás se este pull não era o pretendido
  } catch (e) { /* melhor esforço — não bloqueia o pull */ }
  let text = await gdriveDownload(token, remote.id);
  if (gdriveIsEncryptedPayload(text)) {
- if (!gdrivePassphrase && !promptGDrivePassphrase()) return;
- try { text = await gdriveDecryptText(text, gdrivePassphrase); }
- catch (e) { showToast('Palavra-passe incorreta — não foi possível desencriptar os dados da nuvem.', 'error'); gdrivePassphrase = null; return; }
+ if (!chaveEncriptacao && !pedirChaveEncriptacao()) return;
+ try { text = await gdriveDecryptText(text, chaveEncriptacao); }
+ catch (e) { showToast('Palavra-passe incorreta — não foi possível desencriptar os dados da nuvem.', 'error'); chaveEncriptacao = null; _kdfCache = null; return; }
  }
  const dados = JSON.parse(text);
  const validacao = validateBackupData(dados);
  if (!validacao.ok) { showToast('Backup na nuvem inválido: ' + validacao.erro, 'error'); return; }
  applyImportedBackup(dados);
- localStorage.setItem('galimplant_gdrive_last_sync_time', remote.modifiedTime);
+ persistir('galimplant_gdrive_last_sync_time', remote.modifiedTime);
  updateGDriveStatusUI('✓ Sincronizado às ' + new Date().toLocaleTimeString('pt-PT'));
  showToast('Dados atualizados a partir do Google Drive.');
  } catch (e) {
@@ -2598,6 +2920,33 @@
  if (!gdriveConnected || !gdriveAutoSyncEnabled()) return;
  clearTimeout(gdriveAutoSyncTimer);
  gdriveAutoSyncTimer = setTimeout(() => gdrivePushWithRetry(), 4000);
+ }
+
+ /* ══════════════ Robustez do armazenamento e do ambiente ══════════════ */
+
+ // Pede ao browser armazenamento persistente. Sem isto, o localStorage pode ser removido
+ // automaticamente por falta de espaço (e o Safari/iOS despeja após ~7 dias sem uso),
+ // o que significaria perder fichas clínicas sem qualquer aviso.
+ function pedirPersistenciaArmazenamento() {
+  try {
+   if (!(navigator.storage && navigator.storage.persist && navigator.storage.persisted)) return;
+   navigator.storage.persisted().then(function(japedido) {
+    if (japedido) return;
+    navigator.storage.persist().then(function(concedido) {
+     if (!concedido) console.warn('[Armazenamento] O browser não concedeu armazenamento persistente: os dados podem ser removidos automaticamente em caso de falta de espaço. Mantenha backups regulares.');
+    }).catch(function() {});
+   }).catch(function() {});
+  } catch (e) {}
+ }
+
+ // Deteta limitações do ambiente (file://, browser sem Service Worker ou sem Web Crypto) e
+ // devolve os avisos a mostrar no topo. Antes, estas situações falhavam de forma opaca.
+ function avisosAmbiente() {
+  const avisos = [];
+  if (window.isSecureContext === false) avisos.push('A aplicação não está a correr num contexto seguro (HTTPS ou localhost). A encriptação, a sincronização com o Google Drive e o funcionamento offline ficam indisponíveis.');
+  if (!('serviceWorker' in navigator)) avisos.push('Este browser não suporta Service Workers: a aplicação não funcionará sem ligação à internet.');
+  if (!(window.crypto && crypto.subtle)) avisos.push('Este browser não disponibiliza Web Crypto: a encriptação de backups não está disponível.');
+  return avisos;
  }
 
  window.addEventListener('load', () => {
@@ -2673,6 +3022,17 @@
 </script>
 <script>
 if ('serviceWorker' in navigator) {
+  // Na primeira visita não há controlador; nesse caso o service worker assume o controlo
+  // logo após o registo e não deve ser anunciado como "nova versão".
+  const tinhaControlador = !!navigator.serviceWorker.controller;
+  let jaAvisouAtualizacao = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!tinhaControlador || jaAvisouAtualizacao) return;
+    jaAvisouAtualizacao = true;
+    if (typeof showToast === 'function') {
+      showToast('Nova versão da aplicação instalada. Recarregue a página para a utilizar.', 'warning');
+    }
+  });
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('sw.js').catch(err => console.error('Erro SW:', err));
   });

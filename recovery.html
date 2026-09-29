@@ -175,14 +175,16 @@ async function loadRevision(fileId, revisionId) {
  }
 }
 
-async function deriveKey(passphrase, saltB64) {
+async function deriveKey(passphrase, saltB64, iteracoes) {
  const enc = new TextEncoder();
  const salt = Uint8Array.from(atob(saltB64), c => c.charCodeAt(0));
+ // O número de iterações vem do payload: os backups da v1 usavam 150 000 e os atuais 600 000.
+ const iter = iteracoes || 150000;
  const baseKey = await crypto.subtle.importKey('raw', enc.encode(passphrase), 'PBKDF2', false, ['deriveKey']);
- return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: 150000, hash: 'SHA-256' }, baseKey, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+ return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: iter, hash: 'SHA-256' }, baseKey, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
 }
 async function decryptPayload(payload, passphrase) {
- const key = await deriveKey(passphrase, payload.salt);
+ const key = await deriveKey(passphrase, payload.salt, parseInt(payload.iter, 10) || 150000);
  const iv = Uint8Array.from(atob(payload.iv), c => c.charCodeAt(0));
  const data = Uint8Array.from(atob(payload.data), c => c.charCodeAt(0));
  const plainBuf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, data);

@@ -1,4 +1,4 @@
-const CACHE_NAME = "galimplant-cache-v47";
+const CACHE_NAME = "galimplant-cache-v49";
 const ASSETS = [
   "./index.html",
   "./recovery.html",
@@ -8,7 +8,8 @@ const ASSETS = [
   "./icon-192-maskable.png",
   "./icon-512-maskable.png",
   "./jspdf.umd.min.js",
-  "./jspdf.plugin.autotable.min.js"
+  "./jspdf.plugin.autotable.min.js",
+  "./Manual_de_Instrucoes_e_Utilizacao_Galimplant.pdf"
 ];
 
 self.addEventListener("install", (event) => {

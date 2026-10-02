@@ -2476,7 +2476,7 @@
  function exportEncryptEnabled() { return localStorage.getItem('galimplant_export_encrypt') === 'true'; }
  function setExportEncrypt(checked) {
   if (checked && !chaveEncriptacao) {
-   if (!pedirChaveEncriptacao()) { document.getElementById('exportEncrypt').checked = false; return; }
+   if (!pedirChaveEncriptacao()) { document.getElementById('exportEncrypt').checked = false; showToast('Backup encriptado não ativado: é necessária uma palavra-passe.', 'warning'); return; }
   }
   persistir('galimplant_export_encrypt', checked ? 'true' : 'false');
   showToast(checked ? 'O próximo backup exportado será encriptado.' : 'Backup exportado volta a ser texto simples.');
@@ -2879,14 +2879,30 @@
  function gdriveIsEncryptedPayload(text) {
  try { const p = JSON.parse(text); return !!(p && p.encrypted === true); } catch (e) { return false; }
  }
+ // Pede a palavra-passe de encriptação. Aceita QUALQUER palavra-passe não vazia.
+ // Não há comprimento mínimo: os backups já existentes na nuvem foram encriptados com a
+ // palavra-passe que o utilizador escolheu, e recusá-la agora tornaria esses dados
+ // inacessíveis — e, pior, faria falhar a sincronização em silêncio.
  function pedirChaveEncriptacao() {
  const pass = window.prompt('Palavra-passe de encriptação dos dados (a mesma em todos os dispositivos e em todos os backups):');
  if (!pass) return false;
- if (pass.length < 8) { showToast('Use uma palavra-passe com pelo menos 8 caracteres.', 'warning'); return false; }
  chaveEncriptacao = pass; _kdfCache = null; return true;
  }
+
+ // Mensagem única e clara para o caso "a encriptação está ativa mas não há palavra-passe".
+ // Antes, este caminho abortava o envio/transferência sem dizer nada ao utilizador, que
+ // ficava convencido de que a sincronização tinha corrido bem.
+ let _avisoSemChaveMostrado = false;
+ function avisarFaltaChaveEncriptacao(operacao) {
+ const msg = operacao + ' cancelada: a encriptação está ativa e a palavra-passe não foi introduzida. Nada foi enviado nem alterado na nuvem.';
+ updateGDriveStatusUI('⚠️ Encriptação ativa — falta a palavra-passe. Use "Enviar agora" ou "Transferir da nuvem".');
+ if (!_avisoSemChaveMostrado) { _avisoSemChaveMostrado = true; showToast(msg, 'error'); }
+ else { console.warn('[GDrive] ' + msg); }
+ }
  function toggleGDriveEncrypt(checked) {
- if (checked && !chaveEncriptacao) { if (!pedirChaveEncriptacao()) { document.getElementById('gdriveEncrypt').checked = false; return; } }
+ if (checked && !chaveEncriptacao) {
+  if (!pedirChaveEncriptacao()) { document.getElementById('gdriveEncrypt').checked = false; showToast('Encriptação não ativada: é necessária uma palavra-passe.', 'warning'); return; }
+ }
  persistir('galimplant_gdrive_encrypt', checked ? 'true' : 'false');
  showToast(checked ? 'Encriptação ativada — o próximo envio já vai encriptado.' : 'Encriptação desativada.');
  }
@@ -2939,7 +2955,12 @@
  try {
  let payload = JSON.stringify(buildBackupObject());
  if (gdriveEncryptEnabled()) {
- if (!chaveEncriptacao && !pedirChaveEncriptacao()) return false;
+ if (!chaveEncriptacao) {
+  // A sincronização automática corre em segundo plano: não deve abrir caixas de
+  // diálogo nem repetir tentativas que nunca poderiam resultar.
+  if (silent) { avisarFaltaChaveEncriptacao('Sincronização automática'); return false; }
+  if (!pedirChaveEncriptacao()) { avisarFaltaChaveEncriptacao('Envio'); return false; }
+ }
  payload = await gdriveEncryptText(payload, chaveEncriptacao);
  }
  const result = await gdriveUpload(token, fileId, payload);
@@ -2962,8 +2983,10 @@
  // de falhas de rede momentâneas, sem incomodar o utilizador.
  async function gdrivePushWithRetry(maxRetries = 3, baseDelay = 4000) {
  for (let attempt = 0; attempt <= maxRetries; attempt++) {
- const ok = await gdrivePush(true);
- if (ok) return true;
+  const ok = await gdrivePush(true);
+  if (ok) return true;
+ // Repetir não resolve a falta da palavra-passe (e voltaria a avisar o utilizador).
+ if (gdriveEncryptEnabled() && !chaveEncriptacao) return false;
  if (attempt === maxRetries) return false;
  const delay = Math.min(baseDelay * Math.pow(2, attempt), 30000);
  await new Promise((resolve) => setTimeout(resolve, delay));
@@ -3043,9 +3066,9 @@
  const fileId = localStorage.getItem('galimplant_gdrive_file_id');
  let text = await gdriveDownloadRevision(token, fileId, revId);
  if (gdriveIsEncryptedPayload(text)) {
- if (!chaveEncriptacao && !pedirChaveEncriptacao()) return;
+ if (!chaveEncriptacao && !pedirChaveEncriptacao()) { showToast('Restauro cancelado: falta a palavra-passe de encriptação.', 'error'); return; }
  try { text = await gdriveDecryptText(text, chaveEncriptacao); }
- catch (e) { showToast('Palavra-passe incorreta — não foi possível desencriptar.', 'error'); chaveEncriptacao = null; _kdfCache = null; return; }
+ catch (e) { showToast('Palavra-passe incorreta — a versão não foi restaurada.', 'error'); chaveEncriptacao = null; _kdfCache = null; return; }
  }
  const dados = JSON.parse(text);
  const validacao = validateBackupData(dados);
@@ -3074,9 +3097,9 @@
  } catch (e) { /* melhor esforço — não bloqueia o pull */ }
  let text = await gdriveDownload(token, remote.id);
  if (gdriveIsEncryptedPayload(text)) {
- if (!chaveEncriptacao && !pedirChaveEncriptacao()) return;
+ if (!chaveEncriptacao && !pedirChaveEncriptacao()) { avisarFaltaChaveEncriptacao('Transferência da nuvem'); return; }
  try { text = await gdriveDecryptText(text, chaveEncriptacao); }
- catch (e) { showToast('Palavra-passe incorreta — não foi possível desencriptar os dados da nuvem.', 'error'); chaveEncriptacao = null; _kdfCache = null; return; }
+ catch (e) { showToast('Palavra-passe incorreta — os dados locais NÃO foram alterados.', 'error'); chaveEncriptacao = null; _kdfCache = null; return; }
  }
  const dados = JSON.parse(text);
  const validacao = validateBackupData(dados);
@@ -3095,6 +3118,14 @@
  // Debounce de alguns segundos para agrupar alterações seguidas num único envio silencioso.
  function scheduleGDriveAutoSync() {
  if (!gdriveConnected || !gdriveAutoSyncEnabled()) return;
+ // A palavra-passe de encriptação é pedida a cada arranque (nunca é guardada em disco),
+ // por isso depois de recarregar a página o envio automático não teria como cifrar os
+ // dados e era simplesmente ignorado. Como este ponto é sempre alcançado por uma ação do
+ // utilizador (gravar ficha, alterar stock, mexer no catálogo), é aqui que faz sentido
+ // pedi-la — uma vez por sessão — em vez de deixar a sincronização não acontecer.
+ if (gdriveEncryptEnabled() && !chaveEncriptacao) {
+  if (!pedirChaveEncriptacao()) { avisarFaltaChaveEncriptacao('Sincronização automática'); return; }
+ }
  clearTimeout(gdriveAutoSyncTimer);
  gdriveAutoSyncTimer = setTimeout(() => gdrivePushWithRetry(), 4000);
  }

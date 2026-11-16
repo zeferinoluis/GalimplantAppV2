@@ -2713,9 +2713,12 @@
 
  const GDRIVE_OAUTH_STATE_KEY = 'galimplant_gdrive_oauth_state';
 
- function isSafariBrowser() {
+ function deveUsarOAuthRedirect() {
   const ua = navigator.userAgent || '';
-  return /Safari/i.test(ua) && !/Chrome|Chromium|CriOS|Edg|OPR|Firefox|FxiOS/i.test(ua);
+  const isSafari = /Safari/i.test(ua) && !/Chrome|Chromium|CriOS|Edg|OPR|Firefox|FxiOS/i.test(ua);
+  const isMobile = /Android|iPhone|iPad|iPod/i.test(ua);
+  const isStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+  return isSafari || isMobile || isStandalone;
  }
 
  function gdriveRedirectUri() {
@@ -2770,9 +2773,9 @@
  const clientId = (inputEl.value.trim()) || localStorage.getItem('galimplant_gdrive_clientid') || '';
  if (!clientId) { showToast('Indique o Client ID OAuth do Google antes de ligar.', 'error'); return; }
  persistir('galimplant_gdrive_clientid', clientId);
- // No Safari moderno (WebKit), popups cross-origin para accounts.google.com perdem window.opener,
- // impedindo o gis_transform de devolver o token. O fluxo por redirecionamento evita popups.
- if (isSafariBrowser()) {
+ // No Safari moderno e em dispositivos móveis / PWA (Android, iOS), popups cross-origin
+ // podem perder window.opener ou ser bloqueados. O fluxo por redirecionamento evita popups.
+ if (deveUsarOAuthRedirect()) {
   gdriveStartRedirectAuth(clientId, 'consent');
   return;
  }
@@ -2822,7 +2825,7 @@
  return new Promise((resolve, reject) => {
  if (gdriveAccessToken && Date.now() < gdriveTokenExpiry - 60000) { resolve(gdriveAccessToken); return; }
  if (!gdriveTokenClient) {
-  if (gdriveConnected && isSafariBrowser()) {
+  if (gdriveConnected && deveUsarOAuthRedirect()) {
    disconnectGDrive();
    showToast('Sessão Google Drive expirada. Clique em "Ligar ao Google Drive" para renovar.', 'warning');
   }

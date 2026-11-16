@@ -2728,6 +2728,10 @@
  function gdriveStartRedirectAuth(clientId, promptMode) {
   const bytes = crypto.getRandomValues(new Uint8Array(16));
   const state = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+  // Usar localStorage (em vez de sessionStorage) para sobreviver à transição PWA <-> Custom Tab no Android
+  try {
+   localStorage.setItem(GDRIVE_OAUTH_STATE_KEY, JSON.stringify({ state: state, ts: Date.now() }));
+  } catch (e) {}
   sessionStorage.setItem(GDRIVE_OAUTH_STATE_KEY, state);
   const params = new URLSearchParams({
    client_id: clientId,
@@ -2745,11 +2749,26 @@
   const hash = window.location.hash || '';
   if (!hash || (!hash.includes('access_token=') && !hash.includes('error='))) return;
   const params = new URLSearchParams(hash.slice(1));
-  const expectedState = sessionStorage.getItem(GDRIVE_OAUTH_STATE_KEY);
-  const returnedState = params.get('state');
-  if (!expectedState || returnedState !== expectedState) return;
-  sessionStorage.removeItem(GDRIVE_OAUTH_STATE_KEY);
   history.replaceState(null, '', window.location.pathname + window.location.search);
+
+  let expectedState = sessionStorage.getItem(GDRIVE_OAUTH_STATE_KEY);
+  sessionStorage.removeItem(GDRIVE_OAUTH_STATE_KEY);
+  try {
+   const raw = localStorage.getItem(GDRIVE_OAUTH_STATE_KEY);
+   localStorage.removeItem(GDRIVE_OAUTH_STATE_KEY);
+   if (!expectedState && raw) {
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.state && (Date.now() - (parsed.ts || 0)) < 10 * 60 * 1000) {
+     expectedState = parsed.state;
+    }
+   }
+  } catch (e) {}
+
+  const returnedState = params.get('state');
+  if (!expectedState || returnedState !== expectedState) {
+   showToast('Sessão de autenticação expirada ou inválida. Tente ligar novamente.', 'error');
+   return;
+  }
 
   const err = params.get('error');
   if (err) {

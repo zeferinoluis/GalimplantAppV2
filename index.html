@@ -2711,15 +2711,75 @@
  document.getElementById('gdrive-options').style.display = gdriveConnected ? '' : 'none';
  }
 
+ const GDRIVE_OAUTH_STATE_KEY = 'galimplant_gdrive_oauth_state';
+
+ function isSafariBrowser() {
+  const ua = navigator.userAgent || '';
+  return /Safari/i.test(ua) && !/Chrome|Chromium|CriOS|Edg|OPR|Firefox|FxiOS/i.test(ua);
+ }
+
+ function gdriveRedirectUri() {
+  return window.location.origin + window.location.pathname;
+ }
+
+ function gdriveStartRedirectAuth(clientId, promptMode) {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  const state = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+  sessionStorage.setItem(GDRIVE_OAUTH_STATE_KEY, state);
+  const params = new URLSearchParams({
+   client_id: clientId,
+   redirect_uri: gdriveRedirectUri(),
+   response_type: 'token',
+   scope: GDRIVE_SCOPE,
+   include_granted_scopes: 'true',
+   state: state
+  });
+  if (promptMode) params.set('prompt', promptMode);
+  window.location.assign('https://accounts.google.com/o/oauth2/v2/auth?' + params.toString());
+ }
+
+ async function handleGDriveRedirectCallback() {
+  const hash = window.location.hash || '';
+  if (!hash || (!hash.includes('access_token=') && !hash.includes('error='))) return;
+  const params = new URLSearchParams(hash.slice(1));
+  const expectedState = sessionStorage.getItem(GDRIVE_OAUTH_STATE_KEY);
+  const returnedState = params.get('state');
+  if (!expectedState || returnedState !== expectedState) return;
+  sessionStorage.removeItem(GDRIVE_OAUTH_STATE_KEY);
+  history.replaceState(null, '', window.location.pathname + window.location.search);
+
+  const err = params.get('error');
+  if (err) {
+   showToast('Autenticação Google falhou: ' + err, 'error');
+   return;
+  }
+  const token = params.get('access_token');
+  if (!token) return;
+  const expiresIn = parseInt(params.get('expires_in') || '3600', 10) || 3600;
+  gdriveAccessToken = token;
+  gdriveTokenExpiry = Date.now() + (expiresIn * 1000);
+  gdriveConnected = true;
+  document.getElementById('gdriveAutoSync').checked = gdriveAutoSyncEnabled();
+  document.getElementById('gdriveEncrypt').checked = gdriveEncryptEnabled();
+  updateGDriveStatusUI('Ligado. A verificar dados na nuvem...');
+  await gdriveCheckOnConnect();
+ }
+
  function connectGDrive() {
  const inputEl = document.getElementById('gdriveClientId');
  const clientId = (inputEl.value.trim()) || localStorage.getItem('galimplant_gdrive_clientid') || '';
  if (!clientId) { showToast('Indique o Client ID OAuth do Google antes de ligar.', 'error'); return; }
+ persistir('galimplant_gdrive_clientid', clientId);
+ // No Safari moderno (WebKit), popups cross-origin para accounts.google.com perdem window.opener,
+ // impedindo o gis_transform de devolver o token. O fluxo por redirecionamento evita popups.
+ if (isSafariBrowser()) {
+  gdriveStartRedirectAuth(clientId, 'consent');
+  return;
+ }
  if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
  showToast('A biblioteca do Google ainda não carregou (verifique a ligação à internet) — tente novamente em instantes.', 'error');
  return;
  }
- persistir('galimplant_gdrive_clientid', clientId);
  gdriveTokenClient = google.accounts.oauth2.initTokenClient({
  client_id: clientId,
  scope: GDRIVE_SCOPE,
@@ -2761,7 +2821,14 @@
  function ensureGDriveToken() {
  return new Promise((resolve, reject) => {
  if (gdriveAccessToken && Date.now() < gdriveTokenExpiry - 60000) { resolve(gdriveAccessToken); return; }
- if (!gdriveTokenClient) { reject(new Error('not_connected')); return; }
+ if (!gdriveTokenClient) {
+  if (gdriveConnected && isSafariBrowser()) {
+   disconnectGDrive();
+   showToast('Sessão Google Drive expirada. Clique em "Ligar ao Google Drive" para renovar.', 'warning');
+  }
+  reject(new Error('not_connected'));
+  return;
+ }
  gdriveTokenClient.callback = (resp) => {
  if (resp.error) { reject(new Error(resp.error)); return; }
  gdriveAccessToken = resp.access_token; gdriveTokenExpiry = Date.now() + (resp.expires_in * 1000);
@@ -3161,6 +3228,7 @@
  if (localStorage.getItem('galimplant_gdrive_clientid')) {
  document.getElementById('gdriveClientId').value = localStorage.getItem('galimplant_gdrive_clientid');
  }
+ handleGDriveRedirectCallback();
  });
 
  /* ── Custom Autocomplete Functions ── */

@@ -1,4 +1,4 @@
-const CACHE_NAME = "galimplant-cache-v54";
+const CACHE_NAME = "galimplant-cache-v55";
 const ASSETS = [
   "./index.html",
   "./recovery.html",
